@@ -1,0 +1,266 @@
+{% extends "base.html" %}
+
+{% block title %}Аналитика - Admin Panel{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">📈 Аналитика</h1>
+    <div class="btn-toolbar mb-2 mb-md-0">
+        <select class="form-select me-2" id="periodSelect" style="width: auto;">
+            <option value="1">Последний день</option>
+            <option value="7" selected>Последние 7 дней</option>
+            <option value="30">Последние 30 дней</option>
+        </select>
+        <a href="/export/analytics" class="btn btn-outline-primary me-2">
+            <i class="fas fa-download"></i> Экспорт JSON
+        </a>
+        <button class="btn btn-primary" onclick="refreshAnalytics()">
+            <i class="fas fa-sync-alt"></i> Обновить
+        </button>
+    </div>
+</div>
+
+<!-- Метрики -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h3 id="totalEvents">0</h3>
+                <p class="text-muted">Всего событий</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h3 id="totalApiCalls">0</h3>
+                <p class="text-muted">API вызовов</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h3 id="totalApiCost">$0.00</h3>
+                <p class="text-muted">Затраты на API</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h3 id="periodDays">7</h3>
+                <p class="text-muted">Дней в периоде</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Графики -->
+<div class="row mb-4">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5>Активность по дням</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="timelineChart" height="100"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5>События по типам</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="eventsTypeChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- API статистика -->
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5>API Статистика</h5>
+            </div>
+            <div class="card-body">
+                <div id="apiStatsTable">
+                    <p class="text-muted">Загрузка...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5>Конверсионная воронка</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="funnelChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let timelineChart, eventsTypeChart, funnelChart;
+
+function initAnalyticsCharts() {
+    // График активности по времени
+    const timelineCtx = document.getElementById('timelineChart').getContext('2d');
+    timelineChart = new Chart(timelineCtx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'События',
+                data: [],
+                borderColor: '#36A2EB',
+                backgroundColor: 'rgba(54, 162, 235, 0.1)',
+                fill: true,
+                tension: 0.4
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+    
+    // График типов событий
+    const eventsTypeCtx = document.getElementById('eventsTypeChart').getContext('2d');
+    eventsTypeChart = new Chart(eventsTypeCtx, {
+        type: 'doughnut',
+        data: {
+            labels: [],
+            datasets: [{
+                data: [],
+                backgroundColor: [
+                    '#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', 
+                    '#9966FF', '#FF9F40', '#FF6384', '#C9CBCF'
+                ]
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false
+        }
+    });
+    
+    // График воронки
+    const funnelCtx = document.getElementById('funnelChart').getContext('2d');
+    funnelChart = new Chart(funnelCtx, {
+        type: 'bar',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Пользователи',
+                data: [],
+                backgroundColor: '#4BC0C0'
+            }]
+        },
+        options: {
+            responsive: true,
+            indexAxis: 'y'
+        }
+    });
+}
+
+function updateAnalyticsData(data) {
+    if (!data) return;
+    
+    // Обновляем метрики
+    document.getElementById('totalEvents').textContent = data.total_events || 0;
+    document.getElementById('totalApiCalls').textContent = data.total_api_calls || 0;
+    document.getElementById('totalApiCost').textContent = ' + (data.total_api_cost || 0).toFixed(2);
+    document.getElementById('periodDays').textContent = data.period_days || 7;
+    
+    // Обновляем график активности
+    if (data.events_by_day) {
+        const sortedDays = Object.keys(data.events_by_day).sort();
+        timelineChart.data.labels = sortedDays;
+        timelineChart.data.datasets[0].data = sortedDays.map(day => data.events_by_day[day]);
+        timelineChart.update();
+    }
+    
+    // Обновляем график типов событий
+    if (data.events_by_type) {
+        eventsTypeChart.data.labels = Object.keys(data.events_by_type);
+        eventsTypeChart.data.datasets[0].data = Object.values(data.events_by_type);
+        eventsTypeChart.update();
+    }
+    
+    // Обновляем воронку
+    if (data.conversion_steps) {
+        funnelChart.data.labels = Object.keys(data.conversion_steps);
+        funnelChart.data.datasets[0].data = Object.values(data.conversion_steps);
+        funnelChart.update();
+    }
+    
+    // Обновляем API статистику
+    updateApiStatsTable(data.api_stats || {});
+}
+
+function updateApiStatsTable(apiStats) {
+    const container = document.getElementById('apiStatsTable');
+    
+    if (Object.keys(apiStats).length === 0) {
+        container.innerHTML = '<p class="text-muted">Нет данных об API</p>';
+        return;
+    }
+    
+    let tableHTML = `
+        <div class="table-responsive">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th>Сервис</th>
+                        <th>Вызовы</th>
+                        <th>Стоимость</th>
+                        <th>Ошибки</th>
+                        <th>Ср. время</th>
+                    </tr>
+                </thead>
+                <tbody>
+    `;
+    
+    for (const [service, stats] of Object.entries(apiStats)) {
+        tableHTML += `
+            <tr>
+                <td><strong>${service}</strong></td>
+                <td>${stats.calls}</td>
+                <td>${stats.cost.toFixed(4)}</td>
+                <td>${stats.errors || 0}</td>
+                <td>${stats.avg_time ? stats.avg_time.toFixed(1) + 's' : 'N/A'}</td>
+            </tr>
+        `;
+    }
+    
+    tableHTML += '</tbody></table></div>';
+    container.innerHTML = tableHTML;
+}
+
+function refreshAnalytics() {
+    const period = document.getElementById('periodSelect').value;
+    fetch(`/api/analytics?days=${period}`)
+        .then(response => response.json())
+        .then(data => updateAnalyticsData(data))
+        .catch(error => console.error('Error:', error));
+}
+
+// Обработчик изменения периода
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('periodSelect').addEventListener('change', refreshAnalytics);
+    initAnalyticsCharts();
+    refreshAnalytics();
+});
+</script>
+{% endblock %}

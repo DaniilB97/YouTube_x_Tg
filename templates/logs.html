@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+
+{% block title %}Логи - Admin Panel{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">📝 Логи системы</h1>
+    <div class="btn-toolbar mb-2 mb-md-0">
+        <a href="/export/logs" class="btn btn-outline-primary me-2">
+            <i class="fas fa-download"></i> Экспорт
+        </a>
+        <button class="btn btn-secondary me-2" onclick="clearLogs()">
+            <i class="fas fa-trash"></i> Очистить
+        </button>
+        <button class="btn btn-primary" onclick="refreshLogs()">
+            <i class="fas fa-sync-alt"></i> Обновить
+        </button>
+    </div>
+</div>
+
+<!-- Фильтры -->
+<div class="card mb-4">
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-3">
+                <select class="form-select" id="logFileFilter">
+                    <option value="">Все файлы</option>
+                    <option value="youtube_summarizer.log">Bot Logs</option>
+                    <option value="admin_dashboard.log">Admin Logs</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <select class="form-select" id="logLevelFilter">
+                    <option value="">Все уровни</option>
+                    <option value="ERROR">ERROR</option>
+                    <option value="WARNING">WARNING</option>
+                    <option value="INFO">INFO</option>
+                    <option value="DEBUG">DEBUG</option>
+                </select>
+            </div>
+            <div class="col-md-4">
+                <input type="text" class="form-control" id="logSearchInput" placeholder="Поиск в логах...">
+            </div>
+            <div class="col-md-2">
+                <button class="btn btn-secondary" onclick="applyLogFilters()">Применить</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Логи -->
+<div class="card">
+    <div class="card-body">
+        <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" id="autoRefresh" checked>
+            <label class="form-check-label" for="autoRefresh">
+                Автообновление (каждые 5 секунд)
+            </label>
+        </div>
+        
+        <div id="logsContainer" style="height: 500px; overflow-y: auto; background-color: #1e1e1e; color: #ffffff; padding: 15px; border-radius: 5px; font-family: 'Courier New', monospace; font-size: 12px;">
+            <div class="text-center text-muted">Загрузка логов...</div>
+        </div>
+        
+        <div class="mt-3">
+            <small class="text-muted">
+                Показано последних <span id="logsCount">0</span> записей
+            </small>
+        </div>
+    </div>
+</div>
+
+<script>
+let allLogs = [];
+let filteredLogs = [];
+let autoRefreshInterval;
+
+function refreshLogs() {
+    fetch('/api/logs')
+        .then(response => response.json())
+        .then(data => {
+            allLogs = data.logs || [];
+            applyLogFilters();
+            document.getElementById('logsCount').textContent = allLogs.length;
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            document.getElementById('logsContainer').innerHTML = 
+                '<div class="text-danger">Ошибка загрузки логов: ' + error.message + '</div>';
+        });
+}
+
+function applyLogFilters() {
+    const fileFilter = document.getElementById('logFileFilter').value;
+    const levelFilter = document.getElementById('logLevelFilter').value;
+    const searchInput = document.getElementById('logSearchInput').value.toLowerCase();
+    
+    filteredLogs = allLogs.filter(log => {
+        const matchesFile = !fileFilter || log.file === fileFilter;
+        const matchesLevel = !levelFilter || log.message.includes(levelFilter);
+        const matchesSearch = !searchInput || log.message.toLowerCase().includes(searchInput);
+        return matchesFile && matchesLevel && matchesSearch;
+    });
+    
+    displayLogs();
+}
+
+function displayLogs() {
+    const container = document.getElementById('logsContainer');
+    
+    if (filteredLogs.length === 0) {
+        container.innerHTML = '<div class="text-muted">Логи не найдены</div>';
+        return;
+    }
+    
+    const logsHTML = filteredLogs.map(log => {
+        let colorClass = '';
+        if (log.message.includes('ERROR')) colorClass = 'text-danger';
+        else if (log.message.includes('WARNING')) colorClass = 'text-warning';
+        else if (log.message.includes('INFO')) colorClass = 'text-info';
+        
+        return `<div class="${colorClass}">[${log.file}] ${log.message}</div>`;
+    }).join('');
+    
+    container.innerHTML = logsHTML;
+    
+    // Прокрутка вниз
+    container.scrollTop = container.scrollHeight;
+}
+
+function clearLogs() {
+    document.getElementById('logsContainer').innerHTML = '<div class="text-muted">Логи очищены</div>';
+    allLogs = [];
+    filteredLogs = [];
+    document.getElementById('logsCount').textContent = '0';
+}
+
+function toggleAutoRefresh() {
+    const autoRefresh = document.getElementById('autoRefresh').checked;
+    
+    if (autoRefresh) {
+        autoRefreshInterval = setInterval(refreshLogs, 5000);
+    } else {
+        if (autoRefreshInterval) {
+            clearInterval(autoRefreshInterval);
+        }
+    }
+}
+
+// Обработчики событий
+document.getElementById('autoRefresh').addEventListener('change', toggleAutoRefresh);
+document.getElementById('logSearchInput').addEventListener('input', applyLogFilters);
+document.getElementById('logFileFilter').addEventListener('change', applyLogFilters);
+document.getElementById('logLevelFilter').addEventListener('change', applyLogFilters);
+
+// Инициализация
+document.addEventListener('DOMContentLoaded', function() {
+    refreshLogs();
+    toggleAutoRefresh();
+});
+</script>
+{% endblock %}
