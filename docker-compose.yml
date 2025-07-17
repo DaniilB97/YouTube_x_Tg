@@ -1,0 +1,220 @@
+# Этот файл определяет всю инфраструктуру микросервисов с Redis, volumes и сетевым взаимодействием
+
+# version: '3.8'
+
+services:
+  # Redis для очередей задач и кеширования
+  redis:
+    image: redis:7-alpine
+    container_name: yt-summarizer-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # API Gateway - центральный маршрутизатор
+  api-gateway:
+    build: ./services/api-gateway
+    container_name: yt-summarizer-api-gateway
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - ./shared:/app/shared:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Telegram Bot Service - фронтенд
+  telegram-bot:
+    build: ./services/telegram-bot
+    container_name: yt-summarizer-telegram-bot
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_API_ID=${TELEGRAM_API_ID}
+      - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
+      - API_GATEWAY_URL=http://api-gateway:8000
+      - REDIS_URL=redis://redis:6379
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
+    depends_on:
+      - redis
+      - api-gateway
+    restart: unless-stopped
+    volumes:
+      - ./shared:/app/shared:ro
+
+  # Video Processing Service - обработка YouTube видео
+  video-processor:
+    build: ./services/video-processor
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
+      - STORAGE_DIR=/app/storage
+     # - YOUTUBE_API_KEY=${YOUTUBE_API_KEY}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - ./shared:/app/shared:ro
+      - video_storage:/app/storage
+    deploy:
+      replicas: 2
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8001/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # AI Processing Service - Ollama, Gemini, Whisper
+  ai-processor:
+    build: ./services/ai-processor
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - OLLAMA_ENDPOINT=${OLLAMA_ENDPOINT:-http://ollama:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1:8b}
+      - WHISPER_MODEL=base
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - ./shared:/app/shared:ro
+      - ai_models:/app/models
+    deploy:
+      replicas: 3
+
+  # Audio Processing Service - TTS, голосовое клонирование, lip sync
+  audio-processor:
+    build: ./services/audio-processor
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
+      - STORAGE_DIR=/app/storage
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - ./shared:/app/shared:ro
+      - audio_storage:/app/storage
+      - ai_models:/app/models
+    deploy:
+      replicas: 2
+
+  # File Management Service - PDF, Markdown генерация
+  file-manager:
+    build: ./services/file-manager
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
+      - STORAGE_DIR=/app/storage
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - ./shared:/app/shared:ro
+      - file_storage:/app/storage
+
+  # Ollama Service (опционально, для локального AI)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: yt-summarizer-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_MODELS=llama3.1:8b
+    restart: unless-stopped
+    # Раскомментируйте для GPU поддержки
+    # runtime: nvidia
+    # environment:
+    #   - NVIDIA_VISIBLE_DEVICES=all
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Monitoring (опционально)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: yt-summarizer-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: yt-summarizer-grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+# Volumes для постоянного хранения данных
+volumes:
+  redis_data:
+    driver: local
+  video_storage:
+    driver: local
+  audio_storage:
+    driver: local
+  file_storage:
+    driver: local
+  ai_models:
+    driver: local
+  ollama_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+# Сеть для взаимодействия сервисов
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

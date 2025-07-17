@@ -1,0 +1,32 @@
+# Core dependencies
+telethon==1.36.0
+supabase==1.2.0
+python-dotenv==1.0.0
+
+# YouTube processing
+youtube-transcript-api==0.6.2
+yt-dlp==2023.12.30
+
+# AI processing
+google-generativeai==0.3.2
+requests==2.31.0
+tiktoken==0.5.2
+
+# Audio processing (NEW)
+openai-whisper==20231117
+torch>=2.0.0
+torchaudio>=2.0.0
+ffmpeg-python==0.2.0
+pydub==0.25.1
+
+# File handling
+aiofiles==23.2.1
+
+# Development dependencies
+pytest==7.4.3
+pytest-asyncio==0.21.1
+
+
+stripe
+pytube
+
