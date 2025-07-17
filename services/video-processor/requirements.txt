@@ -1,0 +1,7 @@
+opencv-python-headless==4.8.1.78
+numpy<2.0
+youtube-transcript-api==0.6.1
+pytube==15.0.0
+yt-dlp==2023.9.24
+redis==5.0.1
+supabase==1.2.0
