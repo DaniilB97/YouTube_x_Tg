@@ -8,4 +8,4 @@ env/
 *.pyc
 __pycache__/
 *.md
-.DS_Store
+.DS_Store.env
