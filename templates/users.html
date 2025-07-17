@@ -1,0 +1,241 @@
+{% extends "base.html" %}
+
+{% block title %}Пользователи - Admin Panel{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">👥 Пользователи</h1>
+    <div class="btn-toolbar mb-2 mb-md-0">
+        <a href="/export/users" class="btn btn-outline-primary me-2">
+            <i class="fas fa-download"></i> Экспорт CSV
+        </a>
+        <button class="btn btn-primary" onclick="refreshUsers()">
+            <i class="fas fa-sync-alt"></i> Обновить
+        </button>
+    </div>
+</div>
+
+<!-- Фильтры -->
+<div class="card mb-4">
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-3">
+                <select class="form-select" id="tierFilter">
+                    <option value="">Все подписки</option>
+                    <option value="free">Free</option>
+                    <option value="premium">Premium</option>
+                    <option value="enterprise">Enterprise</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <input type="text" class="form-control" id="searchInput" placeholder="Поиск по имени...">
+            </div>
+            <div class="col-md-3">
+                <select class="form-select" id="sortBy">
+                    <option value="created_at">По дате создания</option>
+                    <option value="total_summaries">По активности</option>
+                    <option value="daily_usage">По использованию</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <button class="btn btn-secondary" onclick="applyFilters()">Применить</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Таблица пользователей -->
+<div class="card">
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Username</th>
+                        <th>Подписка</th>
+                        <th>Использование</th>
+                        <th>Всего обработано</th>
+                        <th>Создан</th>
+                        <th>Действия</th>
+                    </tr>
+                </thead>
+                <tbody id="usersTableBody">
+                    <tr>
+                        <td colspan="7" class="text-center">Загрузка...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <div id="usersPagination" class="d-flex justify-content-center mt-3">
+            <!-- Пагинация будет добавлена через JS -->
+        </div>
+    </div>
+</div>
+
+<script>
+let allUsers = [];
+let filteredUsers = [];
+let currentPage = 1;
+const usersPerPage = 20;
+
+function updatePageData(data) {
+    if (data.users && data.users.users_list) {
+        allUsers = data.users.users_list;
+        applyFilters();
+    }
+}
+
+function refreshUsers() {
+    fetch('/api/users')
+        .then(response => response.json())
+        .then(data => {
+            allUsers = data.users_list || [];
+            applyFilters();
+        })
+        .catch(error => console.error('Error:', error));
+}
+
+function applyFilters() {
+    const tierFilter = document.getElementById('tierFilter').value;
+    const searchInput = document.getElementById('searchInput').value.toLowerCase();
+    const sortBy = document.getElementById('sortBy').value;
+    
+    // Фильтрация
+    filteredUsers = allUsers.filter(user => {
+        const matchesTier = !tierFilter || user.subscription_tier === tierFilter;
+        const matchesSearch = !searchInput || user.username.toLowerCase().includes(searchInput);
+        return matchesTier && matchesSearch;
+    });
+    
+    // Сортировка
+    filteredUsers.sort((a, b) => {
+        if (sortBy === 'created_at') {
+            return new Date(b.created_at) - new Date(a.created_at);
+        } else if (sortBy === 'total_summaries') {
+            return b.total_summaries - a.total_summaries;
+        } else if (sortBy === 'daily_usage') {
+            return b.daily_usage - a.daily_usage;
+        }
+        return 0;
+    });
+    
+    currentPage = 1;
+    displayUsers();
+}
+
+function displayUsers() {
+    const tbody = document.getElementById('usersTableBody');
+    const startIndex = (currentPage - 1) * usersPerPage;
+    const endIndex = startIndex + usersPerPage;
+    const pageUsers = filteredUsers.slice(startIndex, endIndex);
+    
+    if (pageUsers.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center">Пользователи не найдены</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = pageUsers.map(user => `
+        <tr>
+            <td>${user.user_id}</td>
+            <td>
+                <div class="d-flex align-items-center">
+                    <div class="avatar-placeholder me-2">👤</div>
+                    ${user.username}
+                </div>
+            </td>
+            <td>
+                <span class="badge ${getBadgeClass(user.subscription_tier)}">
+                    ${user.subscription_tier}
+                </span>
+            </td>
+            <td>${user.daily_usage}</td>
+            <td>${user.total_summaries}</td>
+            <td>${new Date(user.created_at).toLocaleDateString()}</td>
+            <td>
+                <button class="btn btn-sm btn-outline-primary" onclick="viewUser(${user.user_id})">
+                    <i class="fas fa-eye"></i>
+                </button>
+            </td>
+        </tr>
+    `).join('');
+    
+    updatePagination();
+}
+
+function getBadgeClass(tier) {
+    switch(tier) {
+        case 'premium': return 'bg-warning';
+        case 'enterprise': return 'bg-success';
+        default: return 'bg-secondary';
+    }
+}
+
+function updatePagination() {
+    const totalPages = Math.ceil(filteredUsers.length / usersPerPage);
+    const pagination = document.getElementById('usersPagination');
+    
+    if (totalPages <= 1) {
+        pagination.innerHTML = '';
+        return;
+    }
+    
+    let paginationHTML = '<nav><ul class="pagination">';
+    
+    // Предыдущая
+    paginationHTML += `
+        <li class="page-item ${currentPage === 1 ? 'disabled' : ''}">
+            <a class="page-link" href="#" onclick="changePage(${currentPage - 1})">Назад</a>
+        </li>
+    `;
+    
+    // Страницы
+    for (let i = 1; i <= totalPages; i++) {
+        if (i === currentPage || i === 1 || i === totalPages || (i >= currentPage - 1 && i <= currentPage + 1)) {
+            paginationHTML += `
+                <li class="page-item ${i === currentPage ? 'active' : ''}">
+                    <a class="page-link" href="#" onclick="changePage(${i})">${i}</a>
+                </li>
+            `;
+        } else if (i === currentPage - 2 || i === currentPage + 2) {
+            paginationHTML += '<li class="page-item disabled"><span class="page-link">...</span></li>';
+        }
+    }
+    
+    // Следующая
+    paginationHTML += `
+        <li class="page-item ${currentPage === totalPages ? 'disabled' : ''}">
+            <a class="page-link" href="#" onclick="changePage(${currentPage + 1})">Вперед</a>
+        </li>
+    `;
+    
+    paginationHTML += '</ul></nav>';
+    pagination.innerHTML = paginationHTML;
+}
+
+function changePage(page) {
+    const totalPages = Math.ceil(filteredUsers.length / usersPerPage);
+    if (page >= 1 && page <= totalPages) {
+        currentPage = page;
+        displayUsers();
+    }
+}
+
+function viewUser(userId) {
+    const user = allUsers.find(u => u.user_id === userId);
+    if (user) {
+        alert(`Пользователь: ${user.username}\nID: ${user.user_id}\nПодписка: ${user.subscription_tier}\nОбработано: ${user.total_summaries}`);
+    }
+}
+
+// Обработчики событий
+document.getElementById('searchInput').addEventListener('input', applyFilters);
+document.getElementById('tierFilter').addEventListener('change', applyFilters);
+
+// Инициализация
+document.addEventListener('DOMContentLoaded', function() {
+    refreshUsers();
+});
+</script>
+{% endblock %}

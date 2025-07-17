@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+
+{% block title %}Дашборд - Admin Panel{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">📊 Дашборд</h1>
+    <div class="btn-toolbar mb-2 mb-md-0">
+        <button class="btn btn-primary" onclick="refreshData()">
+            <i class="fas fa-sync-alt"></i> Обновить
+        </button>
+    </div>
+</div>
+
+<!-- Статистика -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card stat-card">
+            <div class="card-body text-center">
+                <i class="fas fa-users fa-2x mb-2"></i>
+                <h3 id="total-users">0</h3>
+                <p>Всего пользователей</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card stat-card">
+            <div class="card-body text-center">
+                <i class="fas fa-user-check fa-2x mb-2"></i>
+                <h3 id="active-users">0</h3>
+                <p>Активные сегодня</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card stat-card">
+            <div class="card-body text-center">
+                <i class="fas fa-crown fa-2x mb-2"></i>
+                <h3 id="premium-users">0</h3>
+                <p>Premium подписки</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card stat-card">
+            <div class="card-body text-center">
+                <i class="fas fa-dollar-sign fa-2x mb-2"></i>
+                <h3 id="total-cost">$0.00</h3>
+                <p>Общие затраты</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Графики -->
+<div class="row">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5>События по типам</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="eventsChart"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5>Активность по дням</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="activityChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let eventsChart, activityChart;
+
+function initCharts() {
+    // График событий
+    const eventsCtx = document.getElementById('eventsChart').getContext('2d');
+    eventsChart = new Chart(eventsCtx, {
+        type: 'doughnut',
+        data: {
+            labels: [],
+            datasets: [{
+                data: [],
+                backgroundColor: ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF']
+            }]
+        }
+    });
+    
+    // График активности
+    const activityCtx = document.getElementById('activityChart').getContext('2d');
+    activityChart = new Chart(activityCtx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'События',
+                data: [],
+                borderColor: '#36A2EB',
+                fill: false
+            }]
+        }
+    });
+}
+
+function updatePageData(data) {
+    // Обновляем статистику
+    if (data.users) {
+        document.getElementById('total-users').textContent = data.users.total_users || 0;
+        document.getElementById('active-users').textContent = data.users.active_users || 0;
+        document.getElementById('premium-users').textContent = data.users.premium_users || 0;
+    }
+    
+    if (data.analytics) {
+        document.getElementById('total-cost').textContent = '$' + (data.analytics.total_cost || 0).toFixed(2);
+        
+        // Обновляем графики
+        if (data.analytics.events_by_type) {
+            eventsChart.data.labels = Object.keys(data.analytics.events_by_type);
+            eventsChart.data.datasets[0].data = Object.values(data.analytics.events_by_type);
+            eventsChart.update();
+        }
+        
+        if (data.analytics.events_by_day) {
+            activityChart.data.labels = Object.keys(data.analytics.events_by_day);
+            activityChart.data.datasets[0].data = Object.values(data.analytics.events_by_day);
+            activityChart.update();
+        }
+    }
+}
+
+function refreshData() {
+    fetch('/api/stats')
+        .then(response => response.json())
+        .then(data => updatePageData(data))
+        .catch(error => console.error('Error:', error));
+}
+
+// Инициализация при загрузке
+document.addEventListener('DOMContentLoaded', function() {
+    initCharts();
+    refreshData();
+});
+</script>
+{% endblock %}

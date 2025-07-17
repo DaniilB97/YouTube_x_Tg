@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+
+{% block title %}Настройки - Admin Panel{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">⚙️ Настройки</h1>
+</div>
+
+<div class="row">
+    <div class="col-md-6">
+        <!-- База данных -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5>🗄️ База данных</h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label class="form-label">Supabase URL:</label>
+                    <input type="text" class="form-control" id="supabaseUrl" readonly>
+                </div>
+                
+                <button class="btn btn-primary" onclick="testConnection()">
+                    <i class="fas fa-plug"></i> Тест подключения
+                </button>
+                
+                <div id="connectionResult" class="mt-3"></div>
+            </div>
+        </div>
+        
+        <!-- Экспорт -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5>📁 Экспорт данных</h5>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <a href="/export/users" class="btn btn-outline-primary">
+                        <i class="fas fa-users"></i> Экспорт пользователей (CSV)
+                    </a>
+                    <a href="/export/analytics" class="btn btn-outline-info">
+                        <i class="fas fa-chart-line"></i> Экспорт аналитики (JSON)
+                    </a>
+                    <a href="/export/logs" class="btn btn-outline-warning">
+                        <i class="fas fa-file-text"></i> Экспорт логов (TXT)
+                    </a>
+                    <a href="/export/all" class="btn btn-success">
+                        <i class="fas fa-archive"></i> Полный экспорт (ZIP)
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6">
+        <!-- Система -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5>💻 Система</h5>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-6">
+                        <h4 id="systemCpu">N/A</h4>
+                        <small class="text-muted">CPU</small>
+                    </div>
+                    <div class="col-6">
+                        <h4 id="systemMemory">N/A</h4>
+                        <small class="text-muted">Память</small>
+                    </div>
+                </div>
+                
+                <hr>
+                
+                <div class="text-center">
+                    <h5 id="systemStatus">🟢 Система работает</h5>
+                    <small class="text-muted">Последняя проверка: <span id="lastCheck">--:--</span></small>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Информация -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5>ℹ️ Информация</h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-2">
+                    <strong>Версия:</strong> 1.0.0
+                </div>
+                <div class="mb-2">
+                    <strong>Последний запуск:</strong> <span id="lastStart">Загрузка...</span>
+                </div>
+                <div class="mb-2">
+                    <strong>Автор:</strong> YouTube Summarizer Bot Team
+                </div>
+                <div class="mb-2">
+                    <strong>GitHub:</strong> <a href="#" target="_blank">Repository</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function testConnection() {
+    const button = event.target;
+    const resultDiv = document.getElementById('connectionResult');
+    
+    button.disabled = true;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Тестирование...';
+    
+    fetch('/api/test-connection')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                resultDiv.innerHTML = `
+                    <div class="alert alert-success">
+                        <strong>✅ Подключение успешно!</strong><br>
+                        <small>Проверено в: ${new Date(data.timestamp).toLocaleString()}</small>
+                        
+                        <div class="mt-2">
+                            <strong>Статус таблиц:</strong>
+                            <ul class="list-unstyled mt-1">
+                                ${Object.entries(data.tables_status).map(([table, status]) => 
+                                    `<li>${status.exists ? '✅' : '❌'} ${table} ${status.exists ? '(' + (status.count || 0) + ' записей)' : ''}</li>`
+                                ).join('')}
+                            </ul>
+                        </div>
+                    </div>
+                `;
+            } else {
+                resultDiv.innerHTML = `
+                    <div class="alert alert-danger">
+                        <strong>❌ Ошибка подключения!</strong><br>
+                        <small>${data.error}</small>
+                    </div>
+                `;
+            }
+        })
+        .catch(error => {
+            resultDiv.innerHTML = `
+                <div class="alert alert-danger">
+                    <strong>❌ Ошибка!</strong><br>
+                    <small>${error.message}</small>
+                </div>
+            `;
+        })
+        .finally(() => {
+            button.disabled = false;
+            button.innerHTML = '<i class="fas fa-plug"></i> Тест подключения';
+        });
+}
+
+function updateSystemInfo() {
+    // Обновляем время последней проверки
+    document.getElementById('lastCheck').textContent = new Date().toLocaleTimeString();
+    
+    // Можно добавить реальные системные метрики, если они доступны
+    document.getElementById('systemCpu').textContent = 'N/A';
+    document.getElementById('systemMemory').textContent = 'N/A';
+}
+
+// Инициализация
+document.addEventListener('DOMContentLoaded', function() {
+    // Заполняем URL базы данных (скрыв ключ)
+    const url = '${os.getenv("SUPABASE_URL", "Не настроено")}';
+    document.getElementById('supabaseUrl').value = url;
+    
+    // Время запуска
+    document.getElementById('lastStart').textContent = new Date().toLocaleString();
+    
+    // Обновляем системную информацию
+    updateSystemInfo();
+    setInterval(updateSystemInfo, 30000); // Каждые 30 секунд
+});
+</script>
+{% endblock %}
