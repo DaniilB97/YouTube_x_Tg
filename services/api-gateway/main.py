@@ -49,7 +49,7 @@ QUEUES = {
 
 # Pydantic models for API requests
 class VideoProcessingRequest(BaseModel):
-    user_id: int
+    user_id: str
     chat_id: int
     youtube_url: str
     processing_type: str = "text_only"  # text_only, frames_only, full_analysis
@@ -57,7 +57,7 @@ class VideoProcessingRequest(BaseModel):
     message_id: Optional[int] = None
 
 class AudioProcessingRequest(BaseModel):
-    user_id: int
+    user_id: str
     chat_id: int
     audio_type: str  # voice_message, audio_file, video_lipsync
     file_path: Optional[str] = None
@@ -66,7 +66,7 @@ class AudioProcessingRequest(BaseModel):
     message_id: Optional[int] = None
 
 class AIConversationRequest(BaseModel):
-    user_id: int
+    user_id: str
     chat_id: int
     message: str
     context: Optional[str] = None
@@ -114,7 +114,7 @@ async def health_check():
         redis_status = await redis.redis.ping()
         
         # Check database connection
-        test_user = await db.get_user(999999999)  # Non-existent user test
+        test_user = await db.get_user("00000000-0000-0000-0000-000000000000")  # Non-existent user test
         
         # Check queue sizes
         queue_sizes = {}
@@ -317,11 +317,16 @@ async def get_queues_status():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/v1/user/{user_id}")
-async def get_user_info(user_id: int):
+async def get_user_info(user_id: str):
     """Get user information"""
+    print(f"🔍 DEBUG: Looking for user_id = {user_id}")
+    
     try:
         user = await db.get_user(user_id)
+        print(f"🔍 DEBUG: db.get_user returned: {user}")
+        
         if not user:
+            print("🔍 DEBUG: User not found, raising 404")
             raise HTTPException(status_code=404, detail="User not found")
         
         return {
@@ -334,9 +339,14 @@ async def get_user_info(user_id: int):
             "created_at": user.created_at.isoformat()
         }
         
+    except HTTPException as e:
+        print(f"🔍 DEBUG: HTTPException: {e}")
+        raise e
     except Exception as e:
-        logger.error(f"Error getting user info: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"🔍 DEBUG: Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -11,7 +11,7 @@ class SubscriptionTier(Enum):
 
 @dataclass
 class User:
-    user_id: int
+    user_id: str
     username: str
     subscription_tier: SubscriptionTier
     subscription_expires: datetime

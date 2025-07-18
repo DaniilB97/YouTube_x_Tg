@@ -13,7 +13,7 @@ def generate_task_id() -> str:
     """Generate unique task ID"""
     return str(uuid.uuid4())
 
-def generate_summary_id(user_id: int, video_id: str) -> str:
+def generate_summary_id(user_id: str, video_id: str) -> str:
     """Generate unique summary ID"""
     timestamp = datetime.now().isoformat()
     return hashlib.md5(f"{user_id}_{video_id}_{timestamp}".encode()).hexdigest()

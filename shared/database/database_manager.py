@@ -21,7 +21,7 @@ class DatabaseManager:
             os.getenv('SUPABASE_KEY')
         )
     
-    async def get_user(self, user_id: int) -> Optional[User]:
+    async def get_user(self, user_id: str) -> Optional[User]:
         """Get user from database"""
         try:
             result = self.supabase.table('users').select('*').eq('user_id', user_id).execute()
@@ -46,7 +46,7 @@ class DatabaseManager:
             logger.error(f"Error getting user {user_id}: {e}")
             return None
     
-    async def create_user(self, user_id: int, username: str, language: str = 'ru') -> User:
+    async def create_user(self, user_id: str, username: str, language: str = 'ru') -> User:
         """Create new user"""
         try:
             user = User(
@@ -95,7 +95,7 @@ class DatabaseManager:
             logger.error(f"Error updating user {user.user_id}: {e}")
             return False
     
-    async def update_user_language(self, user_id: int, language: str) -> bool:
+    async def update_user_language(self, user_id: str, language: str) -> bool:
         """Update user language preference"""
         try:
             self.supabase.table('users').update({'language': language}).eq('user_id', user_id).execute()
@@ -119,7 +119,7 @@ class DatabaseManager:
             logger.error(f"Error saving video summary: {e}")
             return False
     
-    async def get_user_summaries(self, user_id: int, limit: int = 10) -> List[VideoSummary]:
+    async def get_user_summaries(self, user_id: str, limit: int = 10) -> List[VideoSummary]:
         """Get user's recent summaries"""
         try:
             result = self.supabase.table('video_summaries').select('*').eq('user_id', user_id).order('created_at', desc=True).limit(limit).execute()

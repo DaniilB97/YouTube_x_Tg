@@ -27,7 +27,7 @@ class TaskData:
     """Universal task data structure for inter-service communication"""
     task_id: str
     task_type: TaskType
-    user_id: int
+    user_id: str
     chat_id: int
     status: TaskStatus
     priority: int = 1  # 1 = low, 5 = high

@@ -1,0 +1,11 @@
+services:
+  ollama:
+    healthcheck:
+      disable: true
+  
+  ai-processor:
+    depends_on:
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_started

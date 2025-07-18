@@ -1,6 +1,6 @@
-# Этот файл определяет всю инфраструктуру микросервисов с Redis, volumes и сетевым взаимодействием
+# Improved Docker Compose with proper service dependencies and health checks
 
-# version: '3.8'
+#version: '3.8'
 
 services:
   # Redis для очередей задач и кеширования
@@ -18,6 +18,34 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - app-network
+
+  # Ollama Service - IMPROVED: Better health checks and startup
+  ollama:
+    image: ollama/ollama:latest
+    container_name: yt-summarizer-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_MODELS=llama3.1:8b
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_ORIGINS=*
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    # Uncomment for GPU support
+    # runtime: nvidia
+    # environment:
+    #   - NVIDIA_VISIBLE_DEVICES=all
+    networks:
+      - app-network
 
   # API Gateway - центральный маршрутизатор
   api-gateway:
@@ -40,6 +68,8 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    networks:
+      - app-network
 
   # Telegram Bot Service - фронтенд
   telegram-bot:
@@ -54,11 +84,15 @@ services:
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_KEY=${SUPABASE_KEY}
     depends_on:
-      - redis
-      - api-gateway
+      redis:
+        condition: service_healthy
+      api-gateway:
+        condition: service_healthy
     restart: unless-stopped
     volumes:
       - ./shared:/app/shared:ro
+    networks:
+      - app-network
 
   # Video Processing Service - обработка YouTube видео
   video-processor:
@@ -68,7 +102,6 @@ services:
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_KEY=${SUPABASE_KEY}
       - STORAGE_DIR=/app/storage
-     # - YOUTUBE_API_KEY=${YOUTUBE_API_KEY}
     depends_on:
       redis:
         condition: service_healthy
@@ -83,8 +116,10 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    networks:
+      - app-network
 
-  # AI Processing Service - Ollama, Gemini, Whisper
+  # AI Processing Service - IMPROVED: Better Ollama dependency management
   ai-processor:
     build: ./services/ai-processor
     environment:
@@ -92,11 +127,13 @@ services:
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_KEY=${SUPABASE_KEY}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - OLLAMA_ENDPOINT=${OLLAMA_ENDPOINT:-http://ollama:11434}
+      - OLLAMA_ENDPOINT=http://ollama:11434
       - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1:8b}
       - WHISPER_MODEL=base
     depends_on:
       redis:
+        condition: service_healthy
+      ollama:
         condition: service_healthy
     restart: unless-stopped
     volumes:
@@ -104,6 +141,8 @@ services:
       - ai_models:/app/models
     deploy:
       replicas: 3
+    networks:
+      - app-network
 
   # Audio Processing Service - TTS, голосовое клонирование, lip sync
   audio-processor:
@@ -123,6 +162,8 @@ services:
       - ai_models:/app/models
     deploy:
       replicas: 2
+    networks:
+      - app-network
 
   # File Management Service - PDF, Markdown генерация
   file-manager:
@@ -139,27 +180,8 @@ services:
     volumes:
       - ./shared:/app/shared:ro
       - file_storage:/app/storage
-
-  # Ollama Service (опционально, для локального AI)
-  ollama:
-    image: ollama/ollama:latest
-    container_name: yt-summarizer-ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    environment:
-      - OLLAMA_MODELS=llama3.1:8b
-    restart: unless-stopped
-    # Раскомментируйте для GPU поддержки
-    # runtime: nvidia
-    # environment:
-    #   - NVIDIA_VISIBLE_DEVICES=all
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+    networks:
+      - app-network
 
   # Monitoring (опционально)
   prometheus:
@@ -178,6 +200,8 @@ services:
     restart: unless-stopped
     profiles:
       - monitoring
+    networks:
+      - app-network
 
   grafana:
     image: grafana/grafana:latest
@@ -191,6 +215,8 @@ services:
     restart: unless-stopped
     profiles:
       - monitoring
+    networks:
+      - app-network
 
 # Volumes для постоянного хранения данных
 volumes:
@@ -211,10 +237,11 @@ volumes:
   grafana_data:
     driver: local
 
-# Сеть для взаимодействия сервисов
+# Networks для изоляции сервисов
 networks:
-  default:
+  app-network:
     driver: bridge
     ipam:
+      driver: default
       config:
         - subnet: 172.20.0.0/16

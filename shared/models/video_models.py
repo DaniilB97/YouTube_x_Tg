@@ -18,7 +18,7 @@ class ProcessingStatus(Enum):
 @dataclass
 class VideoSummary:
     id: str
-    user_id: int
+    user_id: str
     youtube_url: str
     video_id: str
     title: str
@@ -35,7 +35,7 @@ class VideoSummary:
 @dataclass
 class PaymentRecord:
     id: str
-    user_id: int
+    user_id: str
     amount: float
     currency: str
     subscription_tier: str  # Will be SubscriptionTier enum

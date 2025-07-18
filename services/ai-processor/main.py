@@ -1,6 +1,4 @@
-# Этот файл создает AI Processing Service для Ollama, Gemini и Whisper обработки
-
-# services/ai-processor/main.py
+# services/ai-processor/main.py - УЛУЧШЕННАЯ ВЕРСИЯ
 import os
 import asyncio
 import logging
@@ -46,33 +44,94 @@ class AIProcessor:
         self.ollama_endpoint = os.getenv('OLLAMA_ENDPOINT', 'http://ollama:11434')
         self.ollama_model = os.getenv('OLLAMA_MODEL', 'llama3.1:8b')
         self.ollama_available = False
+        self.ollama_check_task = None
         
-        # Check Ollama availability
-        asyncio.create_task(self.check_ollama_availability())
+        logger.info(f"🔍 Ollama endpoint: {self.ollama_endpoint}")
+        logger.info(f"🔍 Ollama model: {self.ollama_model}")
+    
+    async def initialize(self):
+        """Initialize the AI processor"""
+        # Start Ollama availability check
+        self.ollama_check_task = asyncio.create_task(self.check_ollama_availability())
+        await asyncio.sleep(2)  # Give it a moment to start checking
     
     async def check_ollama_availability(self):
-        """Check if Ollama is running and model is available"""
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"{self.ollama_endpoint}/api/tags", timeout=5) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        models = [model['name'] for model in data.get('models', [])]
-                        
-                        if self.ollama_model in models:
-                            self.ollama_available = True
-                            logger.info(f"✅ Ollama available with model: {self.ollama_model}")
-                        else:
-                            logger.warning(f"⚠️ Ollama model {self.ollama_model} not found. Available: {models}")
-                            if models:
+        """Check if Ollama is running and model is available - УЛУЧШЕННАЯ ВЕРСИЯ"""
+        max_retries = 30  # Увеличено количество попыток
+        retry_count = 0
+        initial_delay = 10  # Начальная задержка для старта Ollama
+        
+        logger.info(f"⏳ Waiting {initial_delay}s for Ollama service to start...")
+        await asyncio.sleep(initial_delay)
+        
+        while retry_count < max_retries:
+            try:
+                timeout = aiohttp.ClientTimeout(total=15)  # Увеличен timeout
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    logger.info(f"🔄 Checking Ollama connection (attempt {retry_count + 1}/{max_retries})")
+                    
+                    # Сначала проверим базовую доступность
+                    async with session.get(f"{self.ollama_endpoint}/api/tags") as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            models = [model['name'] for model in data.get('models', [])]
+                            
+                            logger.info(f"📋 Available models: {models}")
+                            
+                            if self.ollama_model in models:
+                                self.ollama_available = True
+                                logger.info(f"✅ Ollama ready with model: {self.ollama_model}")
+                                return
+                            elif models:
+                                # Если наша модель недоступна, но есть другие
                                 self.ollama_model = models[0]
                                 self.ollama_available = True
                                 logger.info(f"✅ Using available model: {self.ollama_model}")
-                    else:
-                        logger.warning("⚠️ Ollama not responding")
-                        
+                                return
+                            else:
+                                logger.info(f"⏳ Ollama running but no models loaded yet...")
+                                # Попробуем загрузить модель
+                                await self.try_pull_model(session)
+                        else:
+                            logger.warning(f"⚠️ Ollama responded with status {response.status}")
+                            
+            except aiohttp.ClientConnectorError as e:
+                logger.info(f"⏳ Waiting for Ollama service... (attempt {retry_count + 1}/{max_retries})")
+                if retry_count < 5:  # Показываем детали только первые несколько раз
+                    logger.debug(f"Connection details: {e}")
+            except asyncio.TimeoutError:
+                logger.info(f"⏳ Ollama connection timeout (attempt {retry_count + 1}/{max_retries})")
+            except Exception as e:
+                logger.warning(f"⚠️ Ollama check error: {e}")
+            
+            retry_count += 1
+            if retry_count < max_retries:
+                # Экспоненциальная задержка с максимумом
+                delay = min(5 + (retry_count * 2), 30)
+                await asyncio.sleep(delay)
+        
+        logger.error(f"❌ Failed to connect to Ollama after {max_retries} attempts")
+        logger.error("💡 Try: docker exec -it yt-summarizer-ollama ollama pull llama3.1:8b")
+    
+    async def try_pull_model(self, session):
+        """Попытка загрузить модель в Ollama"""
+        try:
+            logger.info(f"🔄 Attempting to pull model {self.ollama_model}...")
+            payload = {
+                "name": self.ollama_model,
+                "stream": False
+            }
+            async with session.post(
+                f"{self.ollama_endpoint}/api/pull", 
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=300)  # 5 минут на загрузку
+            ) as response:
+                if response.status == 200:
+                    logger.info(f"✅ Model {self.ollama_model} pulled successfully")
+                else:
+                    logger.warning(f"⚠️ Failed to pull model: {response.status}")
         except Exception as e:
-            logger.warning(f"⚠️ Ollama not available: {e}")
+            logger.warning(f"⚠️ Error pulling model: {e}")
     
     async def generate_summary(self, transcript: str, summary_type: str, title: str, language: str = 'en') -> str:
         """Generate summary using available AI service"""
@@ -90,34 +149,47 @@ class AIProcessor:
         # Try Ollama first (faster, local, free)
         if self.ollama_available:
             try:
+                logger.info("🤖 Generating summary with Ollama...")
                 summary = await self._generate_with_ollama(transcript, summary_enum, title, language)
                 if summary and len(summary.strip()) > 10:
                     logger.info("✅ Generated summary with Ollama")
                     return summary
+                else:
+                    logger.warning("⚠️ Ollama returned empty/short summary")
             except Exception as e:
-                logger.error(f"Ollama failed: {e}")
+                logger.error(f"❌ Ollama failed: {e}")
+                self.ollama_available = False  # Пометить как недоступный
         
         # Fallback to Gemini
         if self.gemini_available:
             try:
+                logger.info("🤖 Generating summary with Gemini...")
                 summary = await self._generate_with_gemini(transcript, summary_enum, title, language)
                 if summary and len(summary.strip()) > 10:
                     logger.info("✅ Generated summary with Gemini")
                     return summary
             except Exception as e:
-                logger.error(f"Gemini failed: {e}")
+                logger.error(f"❌ Gemini failed: {e}")
         
         # If both fail, return error message
+        logger.warning("⚠️ All AI services failed, using fallback")
         return self._get_fallback_summary(transcript, summary_enum, title)
     
     async def _generate_with_ollama(self, transcript: str, summary_type: SummaryType, title: str, language: str) -> str:
-        """Generate summary using Ollama API"""
+        """Generate summary using Ollama API - УЛУЧШЕННАЯ ВЕРСИЯ"""
+        
+        if not self.ollama_available:
+            raise Exception("Ollama service not available")
         
         prompts = self._get_ollama_prompts(language)
         
+        # Ограничиваем длину транскрипта в зависимости от модели
+        max_length = 6000 if 'llama3.1:8b' in self.ollama_model else 4000
+        transcript_truncated = transcript[:max_length]
+        
         prompt_text = prompts[summary_type].format(
             title=title,
-            transcript=transcript[:8000]  # Limit transcript length for Ollama
+            transcript=transcript_truncated
         )
         
         payload = {
@@ -127,83 +199,120 @@ class AIProcessor:
             "options": {
                 "temperature": 0.7,
                 "top_p": 0.9,
-                "max_tokens": self._get_max_tokens(summary_type),
-                "stop": ["</summary>", "[END]"]
+                "num_predict": self._get_max_tokens(summary_type),
+                "stop": ["</summary>", "[END]", "\n\nUser:", "\n\nHuman:"],
+                "repeat_penalty": 1.1
             }
         }
         
-        async with aiohttp.ClientSession() as session:
+        timeout = aiohttp.ClientTimeout(total=180)  # 3 минуты timeout
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(
                 f"{self.ollama_endpoint}/api/generate", 
-                json=payload,
-                timeout=60
+                json=payload
             ) as response:
                 
                 if response.status == 200:
                     data = await response.json()
-                    return data.get('response', '').strip()
+                    result = data.get('response', '').strip()
+                    
+                    # Проверка качества ответа
+                    if len(result) < 20:
+                        raise Exception(f"Response too short: {result}")
+                    
+                    return result
                 else:
                     error_text = await response.text()
                     raise Exception(f"Ollama API error {response.status}: {error_text}")
     
     def _get_ollama_prompts(self, language: str) -> dict:
-        """Get language-specific prompts for Ollama"""
+        """Get language-specific prompts for Ollama - УЛУЧШЕННЫЕ ПРОМПТЫ"""
         
         if language == 'ru':
             return {
-                SummaryType.SHORT: """Создай краткое резюме этого YouTube видео на русском языке в 2-3 предложениях.
+                SummaryType.SHORT: """Ты - профессиональный редактор. Создай краткое резюме YouTube видео на русском языке.
 
-Название видео: {title}
+Название: {title}
 
 Транскрипт:
 {transcript}
+
+Требования:
+- 2-3 предложения
+- Основные идеи
+- Четкий русский язык
 
 Краткое резюме:""",
                 
-                SummaryType.MEDIUM: """Создай подробное резюме этого YouTube видео на русском языке в 1-2 абзацах.
+                SummaryType.MEDIUM: """Ты - аналитик контента. Создай подробное резюме YouTube видео на русском языке.
 
-Название видео: {title}
+Название: {title}
 
 Транскрипт:
 {transcript}
+
+Требования:
+- 1-2 абзаца
+- Ключевые моменты и выводы
+- Структурированно
 
 Подробное резюме:""",
                 
-                SummaryType.DETAILED: """Создай детальный анализ этого YouTube видео на русском языке.
+                SummaryType.DETAILED: """Ты - эксперт по анализу контента. Создай детальный анализ YouTube видео.
 
-Название видео: {title}
+Название: {title}
 
 Транскрипт:
 {transcript}
+
+Создай структурированный анализ включающий:
+- Основную тему
+- Ключевые аргументы
+- Практические выводы
 
 Детальный анализ:"""
             }
         else:  # English
             return {
-                SummaryType.SHORT: """Create a brief summary of this YouTube video in 2-3 sentences.
+                SummaryType.SHORT: """You are a professional content editor. Create a brief summary of this YouTube video.
 
-Video Title: {title}
+Title: {title}
 
 Transcript:
 {transcript}
+
+Requirements:
+- 2-3 sentences
+- Main ideas only
+- Clear and concise
 
 Brief Summary:""",
                 
-                SummaryType.MEDIUM: """Create a comprehensive summary of this YouTube video in 1-2 paragraphs.
+                SummaryType.MEDIUM: """You are a content analyst. Create a comprehensive summary of this YouTube video.
 
-Video Title: {title}
+Title: {title}
 
 Transcript:
 {transcript}
+
+Requirements:
+- 1-2 paragraphs
+- Key points and insights
+- Well structured
 
 Comprehensive Summary:""",
                 
-                SummaryType.DETAILED: """Create a detailed analysis of this YouTube video.
+                SummaryType.DETAILED: """You are a content analysis expert. Create a detailed analysis of this YouTube video.
 
-Video Title: {title}
+Title: {title}
 
 Transcript:
 {transcript}
+
+Create a structured analysis including:
+- Main topic
+- Key arguments
+- Practical takeaways
 
 Detailed Analysis:"""
             }
@@ -211,9 +320,9 @@ Detailed Analysis:"""
     def _get_max_tokens(self, summary_type: SummaryType) -> int:
         """Get max tokens based on summary type"""
         return {
-            SummaryType.SHORT: 150,
-            SummaryType.MEDIUM: 500,
-            SummaryType.DETAILED: 1000
+            SummaryType.SHORT: 100,
+            SummaryType.MEDIUM: 300,
+            SummaryType.DETAILED: 600
         }[summary_type]
     
     async def _generate_with_gemini(self, transcript: str, summary_type: SummaryType, title: str, language: str) -> str:
@@ -306,6 +415,7 @@ class AudioProcessor:
             if self.whisper_models[model_name] is None:
                 logger.info(f"Loading Whisper model: {model_name}")
                 device = "cuda" if torch.cuda.is_available() else "cpu"
+                logger.info(f"Using device: {device}")
                 self.whisper_models[model_name] = whisper.load_model(model_name, device=device)
             
             self.current_model = self.whisper_models[model_name]
@@ -320,7 +430,8 @@ class AudioProcessor:
         """Transcribe audio file"""
         try:
             if not self.current_model:
-                self.load_whisper_model('base')
+                if not self.load_whisper_model('base'):
+                    raise Exception("Failed to load Whisper model")
             
             logger.info(f"Transcribing with Whisper model: {self.current_model_name}")
             
@@ -349,7 +460,16 @@ class AIProcessorService:
     async def start(self):
         """Start the AI processing service"""
         await self.redis.connect()
-        logger.info("✅ AI Processor Service started")
+        logger.info("✅ AI Processor Service starting...")
+        
+        # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+        # Мы больше не запускаем проверку в фоне, а ЖДЕМ ее завершения.
+        # Метод initialize() больше не нужен, если он только запускал фоновую задачу.
+        logger.info("⏳ Initializing AI providers... This may take a moment.")
+        await self.ai_processor.check_ollama_availability()
+        
+        # Этот лог теперь будет означать, что ВСЕ готово, включая Ollama.
+        logger.info("✅ AI Processor Service fully ready. Starting task processing.")
         
         # Start processing loop
         while True:
