@@ -32,8 +32,8 @@ logger = logging.getLogger(__name__)
 class YouTubeProcessor:
     """Handles YouTube video processing and transcript extraction"""
     
-    def __init__(self):
-        pass
+    def __init__(self, output_dir: str):
+        self.output_dir = output_dir
     
     async def get_video_info(self, video_id: str) -> Optional[Dict]:
         """Get video information with fallback"""
@@ -333,7 +333,13 @@ class VideoProcessorService:
     
     def __init__(self):
         self.redis = get_redis()
-        self.youtube_processor = YouTubeProcessor()
+        
+        # 1. First, define the output directory path.
+        self.output_dir = "/app/temp_audio"
+        
+        # 2. Now you can safely use self.output_dir to initialize other classes.
+        self.youtube_processor = YouTubeProcessor(output_dir=self.output_dir)
+        
         self.frame_extractor = VideoFrameExtractor()
         self.queue_name = 'video_processing_queue'
     
@@ -364,69 +370,120 @@ class VideoProcessorService:
             logger.error(f"Error processing tasks: {e}")
     
     async def process_video_task(self, task_data: TaskData):
-        """Process a single video task"""
+        """
+        Обрабатывает одну задачу: пытается получить транскрипт,
+        а если не удается - скачивает аудио и передает эстафету.
+        """
+        video_id = task_data.data.get('video_id')
+        
         try:
-            # Update status to processing
+            # Сообщаем системе, что мы начали обработку
             await self.redis.set_task_status(task_data.task_id, TaskStatus.PROCESSING)
-            
-            # Extract data
-            youtube_url = task_data.data.get('youtube_url')
-            processing_type = task_data.data.get('processing_type', 'text_only')
-            
-            # Extract video ID
-            video_id = extract_youtube_video_id(youtube_url)
-            if not video_id:
-                raise Exception("Invalid YouTube URL")
-            
-            # Get video info
-            video_info = await self.youtube_processor.get_video_info(video_id)
-            
-            result = {
-                'video_id': video_id,
-                'video_info': video_info,
-                'transcript': None,
-                'language': None,
-                'frames_data': None,
-                'processing_type': processing_type
+
+            # 1. Сначала пытаемся получить готовый транскрипт через API (это быстро)
+            transcript, lang = self._get_transcript_via_api(video_id)
+
+            if transcript:
+                # УСПЕХ: Транскрипт найден! Создаем задачу на САММАРИЗАЦИЮ.
+                logger.info(f"✅ Transcript found for {video_id}. Enqueuing for summarization.")
+                
+                summary_task = TaskData(
+                    task_id=task_data.task_id,
+                    user_id=task_data.user_id,
+                    chat_id=task_data.chat_id,      # ✅ Добавить
+                    status=TaskStatus.PENDING, 
+                    task_type=TaskType.SUMMARY_GENERATION, # Задача на создание выжимки
+                    data={
+                        'transcript': transcript,
+                        'language': lang,
+                        'title': task_data.data.get('title', f'YouTube Video {video_id}')
+                    }
+                )
+                await self.redis.enqueue_task('ai_processing_queue', summary_task)
+
+            else:
+                # ПЛАН Б: Готового транскрипта нет. Скачиваем аудио для Whisper.
+                logger.info(f"No transcript for {video_id}. Downloading audio for Whisper.")
+                audio_path = self._download_audio(video_id)
+
+                if audio_path:
+                    # УСПЕХ: Аудио скачано. Создаем задачу на ТРАНСКРИБАЦИЮ.
+                    logger.info(f"✅ Audio downloaded for {video_id}. Enqueuing for transcription.")
+                    
+                    transcription_task = TaskData(
+                        task_id=task_data.task_id,
+                        user_id=task_data.user_id,
+                        chat_id=task_data.chat_id,      # ✅ Добавить
+                        status=TaskStatus.PENDING,
+                        task_type=TaskType.AUDIO_PROCESSING, # Задача на распознавание речи
+                        data={
+                            'file_path': audio_path,
+                            'title': task_data.data.get('title', f'YouTube Video {video_id}')
+                        }
+                    )
+                    await self.redis.enqueue_task('ai_processing_queue', transcription_task)
+                else:
+                    # ПРОВАЛ: Не удалось даже скачать аудио
+                    raise Exception("Failed to get transcript from API and failed to download audio.")
+
+        except Exception as e:
+            # Глобальная обработка ошибок: если что-то пошло не так, сообщаем об этом
+            logger.error(f"❌ Failed to process video task {task_data.task_id}: {e}")
+            await self.redis.set_task_status(
+                task_data.task_id,
+                TaskStatus.FAILED,
+                error=f"Video processing failed: {e}"
+            )
+
+    def _get_transcript_via_api(self, video_id: str) -> Optional[Tuple[str, str]]:
+        """Пытается получить транскрипт через YouTubeTranscriptApi."""
+        try:
+            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            # Ищем сначала на предпочитаемых языках
+            for lang_code in ['ru', 'en', 'en-US']:
+                try:
+                    transcript = transcript_list.find_transcript([lang_code])
+                    text = ' '.join([item['text'] for item in transcript.fetch()])
+                    if len(text.strip()) > 10:
+                        return text, transcript.language_code
+                except Exception:
+                    continue
+            # Если ничего не нашли в цикле, возвращаем два значения
+            return None, None
+        except Exception as e:
+            logger.warning(f"Could not get transcript via API for {video_id}: {e}")
+            # И в случае любой другой ошибки тоже возвращаем два значения
+            return None, None
+
+    def _download_audio(self, video_id: str) -> Optional[str]:
+        """Скачивает аудио с помощью yt-dlp с оптимальными настройками для Whisper."""
+        try:
+            url = f"https://www.youtube.com/watch?v={video_id}"
+            output_path = os.path.join(self.output_dir, f"{video_id}.wav")
+
+            # Настройки, как в вашем надежном монолите
+            ydl_opts = {
+                'format': 'bestaudio/best',
+                'outtmpl': os.path.join(self.output_dir, f"{video_id}.%(ext)s"),
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'wav',
+                }],
+                'postprocessor_args': ['-ar', '16000'], # 16kHz - идеально для Whisper
+                'quiet': True,
+                'no_warnings': True,
             }
             
-            # Get transcript if needed
-            if processing_type in ['text_only', 'full_analysis']:
-                transcript, language = await self.youtube_processor.get_transcript(video_id)
-                result['transcript'] = transcript
-                result['language'] = language
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+
+            if os.path.exists(output_path):
+                return output_path
             
-            # Extract frames if needed
-            if processing_type in ['frames_only', 'full_analysis']:
-                video_path = self.frame_extractor.download_video_for_analysis(video_id)
-                if video_path:
-                    frames_data = self.frame_extractor.extract_key_frames(video_path)
-                    result['frames_data'] = frames_data
-                    # Cleanup video file
-                    try:
-                        os.remove(video_path)
-                    except:
-                        pass
-            
-            # Set completion status
-            await self.redis.set_task_status(
-                task_data.task_id, 
-                TaskStatus.COMPLETED, 
-                result=result
-            )
-            
-            logger.info(f"✅ Completed task {task_data.task_id}")
-            
+            return None
         except Exception as e:
-            logger.error(f"Error processing video task: {e}")
-            await self.redis.set_task_status(
-                task_data.task_id, 
-                TaskStatus.FAILED, 
-                error=str(e)
-            )
-        finally:
-            # Cleanup
-            self.frame_extractor.cleanup()
+            logger.error(f"Error downloading audio for {video_id}: {e}")
+            return None
 
 async def main():
     """Main entry point"""

@@ -1,0 +1,8 @@
+# Этот файл содержит зависимости для File Manager Service - PDF генерация, Markdown обработка
+
+redis==5.0.1
+supabase==1.2.0
+reportlab==4.0.7
+markdown==3.5.1
+pathlib2==2.3.7
+requests==2.31.0

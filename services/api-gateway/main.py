@@ -7,6 +7,7 @@ import logging
 from datetime import datetime
 from typing import Dict, Any, Optional
 import uuid
+from urllib.parse import urlparse, parse_qs
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -140,10 +141,34 @@ async def health_check():
         logger.error(f"Health check failed: {e}")
         raise HTTPException(status_code=503, detail="Service unhealthy")
 
+def extract_video_id_from_url(url: str) -> str | None:
+    """Надежно извлекает ID видео из разных форматов ссылок YouTube."""
+    if not url:
+        return None
+    try:
+        parsed_url = urlparse(url)
+        if "youtube.com" in parsed_url.hostname:
+            if parsed_url.path == '/watch':
+                return parse_qs(parsed_url.query)['v'][0]
+            elif parsed_url.path.startswith('/embed/'):
+                return parsed_url.path.split('/')[2]
+        elif "youtu.be" in parsed_url.hostname:
+            return parsed_url.path[1:]
+    except Exception:
+        return None
+    return None
+
 @app.post("/api/v1/video/process")
 async def process_video(request: VideoProcessingRequest):
     """Process YouTube video"""
     try:
+        # --- НОВОЕ: Извлекаем ID сразу после получения запроса ---
+        video_id = extract_video_id_from_url(request.youtube_url)
+        
+        # --- НОВОЕ: Проверяем, что ID был успешно извлечен ---
+        if not video_id:
+            raise HTTPException(status_code=400, detail="Invalid YouTube URL or could not extract video ID")
+
         # Get user info
         user = await db.get_user(request.user_id)
         if not user:
@@ -155,22 +180,25 @@ async def process_video(request: VideoProcessingRequest):
         # Create task data
         task_data = TaskData(
             task_id=task_id,
-            task_type=TaskType.YOUTUBE_PROCESSING,
+            task_type=TaskType.YOUTUBE_PROCESSING, # Этот тип должен быть в вашей модели
             user_id=request.user_id,
             chat_id=request.chat_id,
             status=TaskStatus.PENDING,
             priority=get_priority_from_subscription(user.subscription_tier.value),
             message_id=request.message_id,
             data={
-                "youtube_url": request.youtube_url,
+                # --- ИЗМЕНЕНО: Передаем чистый video_id, а не весь URL ---
+                "video_id": video_id, 
+                "youtube_url": request.youtube_url, # Сохраняем и URL для истории
                 "processing_type": request.processing_type,
                 "file_format": request.file_format,
-                "user_language": user.language
+                "user_language": user.language,
+                "title": f"YouTube Video {video_id}" # Можно передать базовый заголовок
             }
         )
         
         # Add to queue
-        success = await redis.enqueue_task(QUEUES['video_processing'], task_data)
+        success = await redis.enqueue_task('video_processing_queue', task_data)
         if not success:
             raise HTTPException(status_code=500, detail="Failed to enqueue task")
         

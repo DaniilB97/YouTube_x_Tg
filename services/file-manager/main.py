@@ -1,0 +1,399 @@
+# Этот файл создает File Manager Service для генерации PDF и Markdown файлов
+
+# services/file-manager/main.py
+import os
+import asyncio
+import logging
+import tempfile
+import shutil
+from datetime import datetime
+from typing import Optional, Dict, List, Tuple
+from pathlib import Path
+import uuid
+
+# Import shared components
+import sys
+sys.path.append('/app')
+from shared.database import get_redis
+from shared.models import TaskData, TaskType, TaskStatus
+from shared.utils import generate_task_id
+
+# File generation libraries
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.lib import colors
+from reportlab.pdfgen import canvas
+from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
+import markdown
+from markdown.extensions import toc, tables, fenced_code
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class PDFGenerator:
+    """Generate professional PDF files from text content"""
+    
+    def __init__(self):
+        self.styles = getSampleStyleSheet()
+        self.setup_custom_styles()
+    
+    def setup_custom_styles(self):
+        """Setup custom paragraph styles"""
+        # Title style
+        self.title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=self.styles['Heading1'],
+            fontSize=18,
+            spaceAfter=30,
+            alignment=TA_CENTER,
+            textColor=colors.darkblue
+        )
+        
+        # Header style
+        self.header_style = ParagraphStyle(
+            'CustomHeader',
+            parent=self.styles['Heading2'],
+            fontSize=14,
+            spaceAfter=20,
+            spaceBefore=20,
+            textColor=colors.darkblue
+        )
+        
+        # Body style
+        self.body_style = ParagraphStyle(
+            'CustomBody',
+            parent=self.styles['Normal'],
+            fontSize=11,
+            spaceAfter=12,
+            alignment=TA_JUSTIFY,
+            leftIndent=20,
+            rightIndent=20
+        )
+        
+        # Summary style
+        self.summary_style = ParagraphStyle(
+            'CustomSummary',
+            parent=self.styles['Normal'],
+            fontSize=10,
+            spaceAfter=15,
+            alignment=TA_JUSTIFY,
+            leftIndent=30,
+            rightIndent=30,
+            backColor=colors.lightgrey
+        )
+    
+    async def generate_pdf(self, summaries: Dict, title: str, file_path: str) -> bool:
+        """Generate PDF file from summaries"""
+        try:
+            # Create document
+            doc = SimpleDocTemplate(
+                file_path,
+                pagesize=A4,
+                rightMargin=72,
+                leftMargin=72,
+                topMargin=72,
+                bottomMargin=18
+            )
+            
+            # Build content
+            story = []
+            
+            # Title
+            story.append(Paragraph(title, self.title_style))
+            story.append(Spacer(1, 12))
+            
+            # Generation info
+            generation_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            info_text = f"Generated on {generation_time} by YouTube Summarizer Bot"
+            story.append(Paragraph(info_text, self.styles['Normal']))
+            story.append(Spacer(1, 20))
+            
+            # Table of contents
+            story.append(Paragraph("Table of Contents", self.header_style))
+            toc_data = [
+                ['Section', 'Page'],
+                ['Short Summary', '2'],
+                ['Medium Summary', '2'],
+                ['Detailed Analysis', '3']
+            ]
+            
+            toc_table = Table(toc_data, colWidths=[4*inch, 1*inch])
+            toc_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 12),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            
+            story.append(toc_table)
+            story.append(Spacer(1, 30))
+            
+            # Short Summary
+            if summaries.get('summary_short'):
+                story.append(Paragraph("📝 Short Summary", self.header_style))
+                story.append(Paragraph(summaries['summary_short'], self.body_style))
+                story.append(Spacer(1, 20))
+            
+            # Medium Summary  
+            if summaries.get('summary_medium'):
+                story.append(Paragraph("📖 Medium Summary", self.header_style))
+                story.append(Paragraph(summaries['summary_medium'], self.body_style))
+                story.append(Spacer(1, 20))
+            
+            # Detailed Analysis
+            if summaries.get('summary_detailed'):
+                story.append(Paragraph("🔍 Detailed Analysis", self.header_style))
+                story.append(Paragraph(summaries['summary_detailed'], self.body_style))
+                story.append(Spacer(1, 20))
+            
+            # Additional info
+            if summaries.get('transcript'):
+                story.append(Paragraph("📄 Original Transcript", self.header_style))
+                # Truncate very long transcripts
+                transcript = summaries['transcript']
+                if len(transcript) > 2000:
+                    transcript = transcript[:2000] + "... [truncated]"
+                story.append(Paragraph(transcript, self.summary_style))
+            
+            # Footer
+            story.append(Spacer(1, 30))
+            footer_text = "Generated by YouTube Summarizer Bot - Microservices Architecture"
+            story.append(Paragraph(footer_text, self.styles['Normal']))
+            
+            # Build PDF
+            await asyncio.to_thread(doc.build, story)
+            
+            logger.info(f"✅ PDF generated: {file_path}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error generating PDF: {e}")
+            return False
+
+class MarkdownGenerator:
+    """Generate Markdown files from text content"""
+    
+    def __init__(self):
+        pass
+    
+    async def generate_markdown(self, summaries: Dict, title: str, file_path: str) -> bool:
+        """Generate Markdown file from summaries"""
+        try:
+            content_lines = []
+            
+            # Title and metadata
+            content_lines.append(f"# {title}\n")
+            content_lines.append(f"*Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*\n")
+            content_lines.append("*by YouTube Summarizer Bot*\n")
+            content_lines.append("---\n")
+            
+            # Table of contents
+            content_lines.append("## Table of Contents\n")
+            content_lines.append("- [📝 Short Summary](#short-summary)")
+            content_lines.append("- [📖 Medium Summary](#medium-summary)")
+            content_lines.append("- [🔍 Detailed Analysis](#detailed-analysis)")
+            if summaries.get('transcript'):
+                content_lines.append("- [📄 Original Transcript](#original-transcript)")
+            content_lines.append("\n---\n")
+            
+            # Short Summary
+            if summaries.get('summary_short'):
+                content_lines.append("## 📝 Short Summary\n")
+                content_lines.append(f"{summaries['summary_short']}\n")
+                content_lines.append("---\n")
+            
+            # Medium Summary
+            if summaries.get('summary_medium'):
+                content_lines.append("## 📖 Medium Summary\n")
+                content_lines.append(f"{summaries['summary_medium']}\n")
+                content_lines.append("---\n")
+            
+            # Detailed Analysis
+            if summaries.get('summary_detailed'):
+                content_lines.append("## 🔍 Detailed Analysis\n")
+                content_lines.append(f"{summaries['summary_detailed']}\n")
+                content_lines.append("---\n")
+            
+            # Original transcript (if available)
+            if summaries.get('transcript'):
+                content_lines.append("## 📄 Original Transcript\n")
+                content_lines.append("```")
+                # Truncate very long transcripts
+                transcript = summaries['transcript']
+                if len(transcript) > 3000:
+                    transcript = transcript[:3000] + "... [truncated]"
+                content_lines.append(transcript)
+                content_lines.append("```\n")
+            
+            # Footer
+            content_lines.append("---")
+            content_lines.append("*Generated by YouTube Summarizer Bot - Microservices Architecture*")
+            
+            # Write to file
+            content = "\n".join(content_lines)
+            await asyncio.to_thread(self._write_file, file_path, content)
+            
+            logger.info(f"✅ Markdown generated: {file_path}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error generating Markdown: {e}")
+            return False
+    
+    def _write_file(self, file_path: str, content: str):
+        """Write content to file (sync operation)"""
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+
+class FileManagerService:
+    """Main File Manager Service"""
+    
+    def __init__(self):
+        self.redis = get_redis()
+        self.pdf_generator = PDFGenerator()
+        self.markdown_generator = MarkdownGenerator()
+        self.queue_name = 'file_management_queue'
+        
+        # Storage directory
+        self.storage_dir = os.getenv('STORAGE_DIR', '/app/storage')
+        self.ensure_storage_directory()
+    
+    def ensure_storage_directory(self):
+        """Ensure storage directory exists"""
+        try:
+            Path(self.storage_dir).mkdir(parents=True, exist_ok=True)
+            logger.info(f"✅ Storage directory ready: {self.storage_dir}")
+        except Exception as e:
+            logger.error(f"Failed to create storage directory: {e}")
+            raise
+    
+    async def start(self):
+        """Start the File Manager service"""
+        await self.redis.connect()
+        logger.info("✅ File Manager Service started")
+        
+        # Start processing loop
+        while True:
+            try:
+                await self.process_tasks()
+            except Exception as e:
+                logger.error(f"Error in processing loop: {e}")
+                await asyncio.sleep(5)
+    
+    async def process_tasks(self):
+        """Process file generation tasks from queue"""
+        try:
+            task_data = await self.redis.dequeue_task(self.queue_name, timeout=30)
+            
+            if task_data:
+                logger.info(f"Processing file generation task {task_data.task_id}")
+                await self.process_file_task(task_data)
+            
+        except Exception as e:
+            logger.error(f"Error processing tasks: {e}")
+    
+    async def process_file_task(self, task_data: TaskData):
+        """Process a single file generation task"""
+        try:
+            await self.redis.set_task_status(task_data.task_id, TaskStatus.PROCESSING)
+            
+            # Extract data
+            summaries = task_data.data.get('summaries', {})
+            title = task_data.data.get('title', 'YouTube Video Summary')
+            file_format = task_data.data.get('file_format', 'both')
+            original_task_id = task_data.data.get('original_task_id')
+            
+            # Generate unique filename
+            file_id = str(uuid.uuid4())[:8]
+            safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            safe_title = safe_title.replace(' ', '_')[:50]  # Limit length
+            
+            generated_files = []
+            
+            # Generate PDF
+            if file_format in ['pdf', 'both']:
+                pdf_filename = f"{safe_title}_{file_id}.pdf"
+                pdf_path = os.path.join(self.storage_dir, pdf_filename)
+                
+                if await self.pdf_generator.generate_pdf(summaries, title, pdf_path):
+                    generated_files.append({
+                        'type': 'pdf',
+                        'filename': pdf_filename,
+                        'path': pdf_path,
+                        'size': os.path.getsize(pdf_path) if os.path.exists(pdf_path) else 0
+                    })
+            
+            # Generate Markdown
+            if file_format in ['markdown', 'both']:
+                md_filename = f"{safe_title}_{file_id}.md"
+                md_path = os.path.join(self.storage_dir, md_filename)
+                
+                if await self.markdown_generator.generate_markdown(summaries, title, md_path):
+                    generated_files.append({
+                        'type': 'markdown',
+                        'filename': md_filename,
+                        'path': md_path,
+                        'size': os.path.getsize(md_path) if os.path.exists(md_path) else 0
+                    })
+            
+            if generated_files:
+                # Complete the ORIGINAL task with file info
+                result = {
+                    'files': generated_files,
+                    'summaries': summaries,
+                    'title': title,
+                    'message': f"Generated {len(generated_files)} file(s) successfully"
+                }
+                
+                # Mark ORIGINAL task as completed
+                if original_task_id:
+                    await self.redis.set_task_status(
+                        original_task_id,
+                        TaskStatus.COMPLETED,
+                        result=result
+                    )
+                    logger.info(f"✅ Completed original task {original_task_id} with files")
+                
+                # Also complete this file task
+                await self.redis.set_task_status(
+                    task_data.task_id,
+                    TaskStatus.COMPLETED,
+                    result=result
+                )
+                
+                logger.info(f"✅ Generated {len(generated_files)} files for task {task_data.task_id}")
+            else:
+                raise Exception("No files were generated successfully")
+            
+        except Exception as e:
+            logger.error(f"Error processing file task: {e}")
+            
+            # Fail both tasks
+            await self.redis.set_task_status(
+                task_data.task_id,
+                TaskStatus.FAILED,
+                error=str(e)
+            )
+            
+            original_task_id = task_data.data.get('original_task_id')
+            if original_task_id:
+                await self.redis.set_task_status(
+                    original_task_id,
+                    TaskStatus.FAILED,
+                    error=f"File generation failed: {str(e)}"
+                )
+
+async def main():
+    """Main entry point"""
+    service = FileManagerService()
+    await service.start()
+
+if __name__ == "__main__":
+    asyncio.run(main())

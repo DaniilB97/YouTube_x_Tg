@@ -109,6 +109,8 @@ services:
     volumes:
       - ./shared:/app/shared:ro
       - video_storage:/app/storage
+      - temp_audio_data:/app/temp_audio 
+    user: "root"
     deploy:
       replicas: 2
     healthcheck:
@@ -139,6 +141,8 @@ services:
     volumes:
       - ./shared:/app/shared:ro
       - ai_models:/app/models
+      - temp_audio_data:/app/temp_audio
+    user: "root"
     deploy:
       replicas: 3
     networks:
@@ -160,6 +164,7 @@ services:
       - ./shared:/app/shared:ro
       - audio_storage:/app/storage
       - ai_models:/app/models
+      - temp_audio_data:/app/temp_audio 
     deploy:
       replicas: 2
     networks:
@@ -236,6 +241,10 @@ volumes:
     driver: local
   grafana_data:
     driver: local
+  temp_audio_data: 
+    driver: local
+  
+
 
 # Networks для изоляции сервисов
 networks:

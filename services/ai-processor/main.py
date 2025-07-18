@@ -440,13 +440,12 @@ class AudioProcessor:
             duration = len(audio) // 1000  # Convert to seconds
             
             # Transcribe
-            result = self.current_model.transcribe(audio_path)
-            
+            result = await asyncio.to_thread(self.current_model.transcribe, audio_path)  # Асинхронный
             return result["text"], result["language"], duration
             
         except Exception as e:
-            logger.error(f"Error transcribing audio: {e}")
-            return None, None, 0
+            logger.error(f"Whisper transcription failed: {e}")
+            return "Audio transcription failed", "en", duration # fallback
 
 class AIProcessorService:
     """Main AI processing service"""
@@ -491,28 +490,51 @@ class AIProcessorService:
         except Exception as e:
             logger.error(f"Error processing tasks: {e}")
     
+    # services/ai-processor/main.py
+
     async def process_ai_task(self, task_data: TaskData):
-        """Process a single AI task"""
+        """
+        Обрабатывает одну задачу: получает текст (через транскрибацию или напрямую),
+        затем генерирует выжимку и завершает задачу.
+        """
         try:
             await self.redis.set_task_status(task_data.task_id, TaskStatus.PROCESSING)
             
-            if task_data.task_type == TaskType.AI_CONVERSATION:
-                result = await self.process_conversation(task_data)
-            elif task_data.task_type == TaskType.AUDIO_PROCESSING:
-                result = await self.process_audio(task_data)
-            else:
-                result = await self.process_summary_generation(task_data)
+            # --- Шаг 1: Получаем текст ---
+            if task_data.task_type == TaskType.AUDIO_PROCESSING:
+                logger.info(f"Task {task_data.task_id}: Transcribing audio...")
+                audio_result = await self.process_audio(task_data)
+                
+                transcript = audio_result.get('transcript')
+                if not transcript:
+                    raise Exception("Whisper failed to produce a transcript.")
+                
+                # Обновляем данные в задаче, добавляя в них полученный транскрипт
+                task_data.data['transcript'] = transcript
+                task_data.data['language'] = audio_result.get('language', 'en')
+
+            elif task_data.task_type == TaskType.SUMMARY_GENERATION:
+                logger.info(f"Task {task_data.task_id}: Using provided transcript...")
+                if not task_data.data.get('transcript'):
+                    raise Exception("Task for summary generation did not contain a transcript.")
+
+            # --- Шаг 2: Теперь, когда текст точно есть в task_data, генерируем выжимку ---
+            logger.info(f"Task {task_data.task_id}: Generating summaries...")
             
+            # ИСПРАВЛЕНИЕ ЗДЕСЬ: Вызываем self.process_summary_generation и передаем всю задачу
+            summaries = await self.process_summary_generation(task_data)
+
+            # --- Шаг 3: Сохраняем финальный результат ---
             await self.redis.set_task_status(
                 task_data.task_id, 
                 TaskStatus.COMPLETED, 
-                result=result
+                result=summaries
             )
             
             logger.info(f"✅ Completed AI task {task_data.task_id}")
-            
+
         except Exception as e:
-            logger.error(f"Error processing AI task: {e}")
+            logger.error(f"Error processing AI task {task_data.task_id}: {e}", exc_info=True)
             await self.redis.set_task_status(
                 task_data.task_id, 
                 TaskStatus.FAILED, 
@@ -576,6 +598,61 @@ class AIProcessorService:
             summaries[f'summary_{summary_type}'] = summary
         
         return summaries
+    
+    async def create_file_manager_task(self, original_task: TaskData, summaries: Dict):
+        """Create File Manager task after generating summaries"""
+        try:
+            from shared.utils import generate_task_id
+            
+            # Create new task for File Manager
+            file_task_id = generate_task_id()
+            
+            file_task_data = TaskData(
+                task_id=file_task_id,
+                task_type=TaskType.FILE_GENERATION,  # New task type
+                user_id=original_task.user_id,
+                chat_id=original_task.chat_id,
+                status=TaskStatus.PENDING,
+                priority=original_task.priority,
+                message_id=original_task.message_id,
+                data={
+                    "original_task_id": original_task.task_id,  # Link back to original
+                    "summaries": summaries,
+                    "title": original_task.data.get('title', 'Summary'),
+                    "file_format": original_task.data.get('file_format', 'both'),  # pdf, markdown, both
+                    "user_language": original_task.data.get('user_language', 'en')
+                }
+            )
+            
+            # Add to file management queue
+            success = await self.redis.enqueue_task('file_management_queue', file_task_data)
+            
+            if success:
+                logger.info(f"✅ Created File Manager task {file_task_id} for original task {original_task.task_id}")
+                
+                # Update original task status to indicate it's being processed further
+                await self.redis.set_task_status(
+                    original_task.task_id,
+                    TaskStatus.PROCESSING,
+                    result={"message": "Generating files...", "file_task_id": file_task_id}
+                )
+            else:
+                logger.error(f"Failed to create File Manager task for {original_task.task_id}")
+                # Complete with summaries only as fallback
+                await self.redis.set_task_status(
+                    original_task.task_id,
+                    TaskStatus.COMPLETED,
+                    result=summaries
+                )
+            
+        except Exception as e:
+            logger.error(f"Error creating File Manager task: {e}")
+            # Complete with summaries only as fallback
+            await self.redis.set_task_status(
+                original_task.task_id,
+                TaskStatus.COMPLETED,
+                result=summaries
+            )
 
 async def main():
     """Main entry point"""
