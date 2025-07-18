@@ -97,15 +97,30 @@ class RedisManager:
         try:
             task_key = f"task:{task_id}"
             result = await self.redis.hgetall(task_key)
-            if result and result.get('result'):
-                result['result'] = json.loads(result['result'])
-            return result if result else None
+            
+            if not result:
+                return None
+            
+            # Декодируем bytes в strings
+            decoded_result = {}
+            for key, value in result.items():
+                decoded_key = key.decode('utf-8') if isinstance(key, bytes) else key
+                decoded_value = value.decode('utf-8') if isinstance(value, bytes) else value
+                decoded_result[decoded_key] = decoded_value
+            
+            # Парсим JSON result если есть
+            if decoded_result.get('result'):
+                import json
+                decoded_result['result'] = json.loads(decoded_result['result'])
+            
+            return decoded_result
+            
         except Exception as e:
             logger.error(f"Error getting task status: {e}")
             return None
     
     # Pub/Sub Operations for real-time updates
-    async def publish_message(self, channel: str, message: Dict):
+    async def publish_message(self, channel: str, message: Dict): 
         """Publish message to channel"""
         try:
             await self.redis.publish(channel, json.dumps(message))
