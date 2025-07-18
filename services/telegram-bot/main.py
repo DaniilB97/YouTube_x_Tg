@@ -446,13 +446,30 @@ class TelegramBotService:
                 await event.reply(self.language_manager.get_text(user.language, 'invalid_url'))
                 return
             
+            # Получаем информацию о видео
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f"https://www.youtube.com/oembed?url={youtube_url}&format=json") as resp:
+                        if resp.status == 200:
+                            video_info = await resp.json()
+                            title = video_info.get('title', f"YouTube Video {video_id}")
+                            author = video_info.get('author_name', 'Unknown')
+                        else:
+                            title = f"YouTube Video {video_id}"
+                            author = 'Unknown'
+            except:
+                title = f"YouTube Video {video_id}"
+                author = 'Unknown'
+
+            duration_text = "Определяем длительность..." if user.language == 'ru' else "Getting duration..."
+            
             # Send processing message
             processing_msg = await event.reply(
                 self.language_manager.get_text(
                     user.language, 
                     'processing_video',
-                    title=f"YouTube Video {video_id}",
-                    duration="Unknown"
+                    title=title,
+                    duration=duration_text
                 )
             )
             

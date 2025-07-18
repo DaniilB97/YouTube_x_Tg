@@ -1,0 +1,8 @@
+redis==5.0.1
+supabase==2.0.0
+torch==2.1.0
+torchvision==0.16.0
+torchaudio==2.1.0
+openai-whisper==20231117
+pydub==0.25.1
+numpy==1.24.

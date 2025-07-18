@@ -14,6 +14,7 @@ class TaskType(Enum):
     VIDEO_LIPSYNC = "video_lipsync"
     AI_CONVERSATION = "ai_conversation"
     FILE_GENERATION = "file_generation"
+    SUMMARY_GENERATION = "summary_generation" 
 
 class TaskStatus(Enum):
     PENDING = "pending"

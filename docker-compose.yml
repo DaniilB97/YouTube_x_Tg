@@ -150,12 +150,14 @@ services:
 
   # Audio Processing Service - TTS, голосовое клонирование, lip sync
   audio-processor:
+    platform: linux/amd64
     build: ./services/audio-processor
     environment:
       - REDIS_URL=redis://redis:6379
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_KEY=${SUPABASE_KEY}
       - STORAGE_DIR=/app/storage
+      - WHISPER_USE_SUBPROCESS=false
     depends_on:
       redis:
         condition: service_healthy
@@ -166,7 +168,18 @@ services:
       - ai_models:/app/models
       - temp_audio_data:/app/temp_audio 
     deploy:
-      replicas: 2
+      replicas: 1  # ← УМЕНЬШИТЬ до 1 реплики
+      resources:
+        limits:
+          memory: 6G  # ← ДОБАВИТЬ ограничение памяти
+        reservations:
+          memory: 2G  # ← ДОБАВИТЬ резервирование
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8002/health || exit 1"] # Предполагая, что сервис будет на порту 8002
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     networks:
       - app-network
 

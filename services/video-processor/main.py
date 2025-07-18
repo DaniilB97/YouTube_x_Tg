@@ -421,7 +421,7 @@ class VideoProcessorService:
                             'title': task_data.data.get('title', f'YouTube Video {video_id}')
                         }
                     )
-                    await self.redis.enqueue_task('ai_processing_queue', transcription_task)
+                    await self.redis.enqueue_task('audio_processing_queue', transcription_task)
                 else:
                     # ПРОВАЛ: Не удалось даже скачать аудио
                     raise Exception("Failed to get transcript from API and failed to download audio.")

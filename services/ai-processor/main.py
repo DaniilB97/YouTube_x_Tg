@@ -1,11 +1,11 @@
-# services/ai-processor/main.py - УЛУЧШЕННАЯ ВЕРСИЯ
+# Этот файл создает AI Processing Service ТОЛЬКО для AI функций - Ollama, Gemini, Summary Generation
+
+# services/ai-processor/main.py
 import os
 import asyncio
 import logging
-import tempfile
-import shutil
 from datetime import datetime
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict
 
 # Import shared components
 import sys
@@ -14,19 +14,16 @@ from shared.database import get_redis
 from shared.models import TaskData, TaskType, TaskStatus, SummaryType
 from shared.utils import generate_task_id
 
-# AI Libraries
+# AI Libraries ONLY
 import aiohttp
 import google.generativeai as genai
-import torch
-import whisper
-from pydub import AudioSegment
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class AIProcessor:
-    """Handles AI processing with Gemini and Ollama"""
+    """Handles ONLY AI processing with Gemini and Ollama - NO AUDIO"""
     
     def __init__(self):
         # Initialize Gemini
@@ -42,7 +39,7 @@ class AIProcessor:
         
         # Ollama configuration
         self.ollama_endpoint = os.getenv('OLLAMA_ENDPOINT', 'http://ollama:11434')
-        self.ollama_model = os.getenv('OLLAMA_MODEL', 'llama3.1:8b')
+        self.ollama_model = os.getenv('OLLAMA_MODEL', 'llama3.1:latest')
         self.ollama_available = False
         self.ollama_check_task = None
         
@@ -51,26 +48,27 @@ class AIProcessor:
     
     async def initialize(self):
         """Initialize the AI processor"""
+        logger.info("⏳ Initializing AI providers... This may take a moment.")
+        
         # Start Ollama availability check
         self.ollama_check_task = asyncio.create_task(self.check_ollama_availability())
         await asyncio.sleep(2)  # Give it a moment to start checking
     
     async def check_ollama_availability(self):
-        """Check if Ollama is running and model is available - УЛУЧШЕННАЯ ВЕРСИЯ"""
-        max_retries = 30  # Увеличено количество попыток
+        """Check if Ollama is running and model is available"""
+        max_retries = 30
         retry_count = 0
-        initial_delay = 10  # Начальная задержка для старта Ollama
+        initial_delay = 10
         
         logger.info(f"⏳ Waiting {initial_delay}s for Ollama service to start...")
         await asyncio.sleep(initial_delay)
         
         while retry_count < max_retries:
             try:
-                timeout = aiohttp.ClientTimeout(total=15)  # Увеличен timeout
+                timeout = aiohttp.ClientTimeout(total=15)
                 async with aiohttp.ClientSession(timeout=timeout) as session:
                     logger.info(f"🔄 Checking Ollama connection (attempt {retry_count + 1}/{max_retries})")
                     
-                    # Сначала проверим базовую доступность
                     async with session.get(f"{self.ollama_endpoint}/api/tags") as response:
                         if response.status == 200:
                             data = await response.json()
@@ -83,22 +81,18 @@ class AIProcessor:
                                 logger.info(f"✅ Ollama ready with model: {self.ollama_model}")
                                 return
                             elif models:
-                                # Если наша модель недоступна, но есть другие
                                 self.ollama_model = models[0]
                                 self.ollama_available = True
                                 logger.info(f"✅ Using available model: {self.ollama_model}")
                                 return
                             else:
                                 logger.info(f"⏳ Ollama running but no models loaded yet...")
-                                # Попробуем загрузить модель
                                 await self.try_pull_model(session)
                         else:
                             logger.warning(f"⚠️ Ollama responded with status {response.status}")
                             
-            except aiohttp.ClientConnectorError as e:
+            except aiohttp.ClientConnectorError:
                 logger.info(f"⏳ Waiting for Ollama service... (attempt {retry_count + 1}/{max_retries})")
-                if retry_count < 5:  # Показываем детали только первые несколько раз
-                    logger.debug(f"Connection details: {e}")
             except asyncio.TimeoutError:
                 logger.info(f"⏳ Ollama connection timeout (attempt {retry_count + 1}/{max_retries})")
             except Exception as e:
@@ -106,25 +100,20 @@ class AIProcessor:
             
             retry_count += 1
             if retry_count < max_retries:
-                # Экспоненциальная задержка с максимумом
                 delay = min(5 + (retry_count * 2), 30)
                 await asyncio.sleep(delay)
         
         logger.error(f"❌ Failed to connect to Ollama after {max_retries} attempts")
-        logger.error("💡 Try: docker exec -it yt-summarizer-ollama ollama pull llama3.1:8b")
     
     async def try_pull_model(self, session):
-        """Попытка загрузить модель в Ollama"""
+        """Try to pull model in Ollama"""
         try:
             logger.info(f"🔄 Attempting to pull model {self.ollama_model}...")
-            payload = {
-                "name": self.ollama_model,
-                "stream": False
-            }
+            payload = {"name": self.ollama_model, "stream": False}
             async with session.post(
                 f"{self.ollama_endpoint}/api/pull", 
                 json=payload,
-                timeout=aiohttp.ClientTimeout(total=300)  # 5 минут на загрузку
+                timeout=aiohttp.ClientTimeout(total=300)
             ) as response:
                 if response.status == 200:
                     logger.info(f"✅ Model {self.ollama_model} pulled successfully")
@@ -158,7 +147,7 @@ class AIProcessor:
                     logger.warning("⚠️ Ollama returned empty/short summary")
             except Exception as e:
                 logger.error(f"❌ Ollama failed: {e}")
-                self.ollama_available = False  # Пометить как недоступный
+                self.ollama_available = False
         
         # Fallback to Gemini
         if self.gemini_available:
@@ -176,14 +165,13 @@ class AIProcessor:
         return self._get_fallback_summary(transcript, summary_enum, title)
     
     async def _generate_with_ollama(self, transcript: str, summary_type: SummaryType, title: str, language: str) -> str:
-        """Generate summary using Ollama API - УЛУЧШЕННАЯ ВЕРСИЯ"""
+        """Generate summary using Ollama API"""
         
         if not self.ollama_available:
             raise Exception("Ollama service not available")
         
         prompts = self._get_ollama_prompts(language)
         
-        # Ограничиваем длину транскрипта в зависимости от модели
         max_length = 6000 if 'llama3.1:8b' in self.ollama_model else 4000
         transcript_truncated = transcript[:max_length]
         
@@ -205,7 +193,7 @@ class AIProcessor:
             }
         }
         
-        timeout = aiohttp.ClientTimeout(total=180)  # 3 минуты timeout
+        timeout = aiohttp.ClientTimeout(total=180)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(
                 f"{self.ollama_endpoint}/api/generate", 
@@ -216,7 +204,6 @@ class AIProcessor:
                     data = await response.json()
                     result = data.get('response', '').strip()
                     
-                    # Проверка качества ответа
                     if len(result) < 20:
                         raise Exception(f"Response too short: {result}")
                     
@@ -226,7 +213,7 @@ class AIProcessor:
                     raise Exception(f"Ollama API error {response.status}: {error_text}")
     
     def _get_ollama_prompts(self, language: str) -> dict:
-        """Get language-specific prompts for Ollama - УЛУЧШЕННЫЕ ПРОМПТЫ"""
+        """Get language-specific prompts for Ollama"""
         
         if language == 'ru':
             return {
@@ -394,66 +381,12 @@ Basic Content Preview:
 
 Note: AI summarization services are currently unavailable."""
 
-class AudioProcessor:
-    """Process audio files with Whisper"""
-    
-    def __init__(self):
-        self.whisper_models = {
-            'base': None,
-            'small': None,
-            'medium': None
-        }
-        self.current_model_name = 'base'
-        self.current_model = None
-    
-    def load_whisper_model(self, model_name: str = 'base'):
-        """Load Whisper model"""
-        try:
-            if model_name not in self.whisper_models:
-                model_name = 'base'
-            
-            if self.whisper_models[model_name] is None:
-                logger.info(f"Loading Whisper model: {model_name}")
-                device = "cuda" if torch.cuda.is_available() else "cpu"
-                logger.info(f"Using device: {device}")
-                self.whisper_models[model_name] = whisper.load_model(model_name, device=device)
-            
-            self.current_model = self.whisper_models[model_name]
-            self.current_model_name = model_name
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error loading Whisper model {model_name}: {e}")
-            return False
-    
-    async def transcribe_audio(self, audio_path: str) -> Optional[Tuple[str, str, int]]:
-        """Transcribe audio file"""
-        try:
-            if not self.current_model:
-                if not self.load_whisper_model('base'):
-                    raise Exception("Failed to load Whisper model")
-            
-            logger.info(f"Transcribing with Whisper model: {self.current_model_name}")
-            
-            # Get audio duration
-            audio = AudioSegment.from_file(audio_path)
-            duration = len(audio) // 1000  # Convert to seconds
-            
-            # Transcribe
-            result = await asyncio.to_thread(self.current_model.transcribe, audio_path)  # Асинхронный
-            return result["text"], result["language"], duration
-            
-        except Exception as e:
-            logger.error(f"Whisper transcription failed: {e}")
-            return "Audio transcription failed", "en", duration # fallback
-
 class AIProcessorService:
-    """Main AI processing service"""
+    """Main AI processing service - ONLY AI FUNCTIONS"""
     
     def __init__(self):
         self.redis = get_redis()
         self.ai_processor = AIProcessor()
-        self.audio_processor = AudioProcessor()
         self.queue_name = 'ai_processing_queue'
     
     async def start(self):
@@ -461,13 +394,9 @@ class AIProcessorService:
         await self.redis.connect()
         logger.info("✅ AI Processor Service starting...")
         
-        # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
-        # Мы больше не запускаем проверку в фоне, а ЖДЕМ ее завершения.
-        # Метод initialize() больше не нужен, если он только запускал фоновую задачу.
-        logger.info("⏳ Initializing AI providers... This may take a moment.")
-        await self.ai_processor.check_ollama_availability()
+        # Initialize AI processor
+        await self.ai_processor.initialize()
         
-        # Этот лог теперь будет означать, что ВСЕ готово, включая Ollama.
         logger.info("✅ AI Processor Service fully ready. Starting task processing.")
         
         # Start processing loop
@@ -490,51 +419,40 @@ class AIProcessorService:
         except Exception as e:
             logger.error(f"Error processing tasks: {e}")
     
-    # services/ai-processor/main.py
-
     async def process_ai_task(self, task_data: TaskData):
-        """
-        Обрабатывает одну задачу: получает текст (через транскрибацию или напрямую),
-        затем генерирует выжимку и завершает задачу.
-        """
+        """Process a single AI task"""
         try:
             await self.redis.set_task_status(task_data.task_id, TaskStatus.PROCESSING)
             
-            # --- Шаг 1: Получаем текст ---
-            if task_data.task_type == TaskType.AUDIO_PROCESSING:
-                logger.info(f"Task {task_data.task_id}: Transcribing audio...")
-                audio_result = await self.process_audio(task_data)
+            if task_data.task_type == TaskType.AI_CONVERSATION:
+                result = await self.process_conversation(task_data)
+                # Complete conversation tasks immediately
+                await self.redis.set_task_status(
+                    task_data.task_id, 
+                    TaskStatus.COMPLETED, 
+                    result=result
+                )
                 
-                transcript = audio_result.get('transcript')
-                if not transcript:
-                    raise Exception("Whisper failed to produce a transcript.")
-                
-                # Обновляем данные в задаче, добавляя в них полученный транскрипт
-                task_data.data['transcript'] = transcript
-                task_data.data['language'] = audio_result.get('language', 'en')
-
             elif task_data.task_type == TaskType.SUMMARY_GENERATION:
-                logger.info(f"Task {task_data.task_id}: Using provided transcript...")
-                if not task_data.data.get('transcript'):
-                    raise Exception("Task for summary generation did not contain a transcript.")
-
-            # --- Шаг 2: Теперь, когда текст точно есть в task_data, генерируем выжимку ---
-            logger.info(f"Task {task_data.task_id}: Generating summaries...")
-            
-            # ИСПРАВЛЕНИЕ ЗДЕСЬ: Вызываем self.process_summary_generation и передаем всю задачу
-            summaries = await self.process_summary_generation(task_data)
-
-            # --- Шаг 3: Сохраняем финальный результат ---
-            await self.redis.set_task_status(
-                task_data.task_id, 
-                TaskStatus.COMPLETED, 
-                result=summaries
-            )
+                # This is the new workflow!
+                result = await self.process_summary_generation(task_data)
+                
+                # Don't complete - create File Manager task instead
+                await self.create_file_manager_task(task_data, result)
+                
+            else:
+                # Legacy: process summary generation (old workflow)
+                result = await self.process_summary_generation(task_data)
+                await self.redis.set_task_status(
+                    task_data.task_id, 
+                    TaskStatus.COMPLETED, 
+                    result=result
+                )
             
             logger.info(f"✅ Completed AI task {task_data.task_id}")
-
+            
         except Exception as e:
-            logger.error(f"Error processing AI task {task_data.task_id}: {e}", exc_info=True)
+            logger.error(f"Error processing AI task: {e}")
             await self.redis.set_task_status(
                 task_data.task_id, 
                 TaskStatus.FAILED, 
@@ -547,7 +465,7 @@ class AIProcessorService:
         context = task_data.data.get('context', '')
         language = task_data.data.get('user_language', 'en')
         
-        # Simple conversation for now
+        # Simple conversation
         response = await self.ai_processor.generate_summary(
             f"Context: {context}\nUser message: {message}", 
             'short', 
@@ -559,25 +477,6 @@ class AIProcessorService:
             'response': response,
             'conversation_id': task_data.data.get('conversation_id'),
             'timestamp': datetime.now().isoformat()
-        }
-    
-    async def process_audio(self, task_data: TaskData) -> Dict:
-        """Process audio transcription"""
-        file_path = task_data.data.get('file_path')
-        
-        if not file_path or not os.path.exists(file_path):
-            raise Exception("Audio file not found")
-        
-        transcript, language, duration = await self.audio_processor.transcribe_audio(file_path)
-        
-        if not transcript:
-            raise Exception("Failed to transcribe audio")
-        
-        return {
-            'transcript': transcript,
-            'language': language,
-            'duration': duration,
-            'file_path': file_path
         }
     
     async def process_summary_generation(self, task_data: TaskData) -> Dict:
