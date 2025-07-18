@@ -106,6 +106,8 @@ async def root():
         "timestamp": datetime.now().isoformat()
     }
 
+# Замените функцию health_check в services/api-gateway/main.py на эту версию:
+
 @app.get("/health")
 async def health_check():
     """Detailed health check"""
@@ -113,8 +115,14 @@ async def health_check():
         # Check Redis connection
         redis_status = await redis.redis.ping()
         
-        # Check database connection
-        test_user = await db.get_user("00000000-0000-0000-0000-000000000000")  # Non-existent user test
+        # Check database connection - используем простой запрос без конкретного пользователя
+        try:
+            # Попробуем получить количество пользователей
+            result = db.supabase.table('users').select('user_id', count='exact').limit(1).execute()
+            db_status = "connected"
+        except Exception as db_error:
+            logger.error(f"Database connection failed: {db_error}")
+            db_status = "disconnected"
         
         # Check queue sizes
         queue_sizes = {}
@@ -124,7 +132,7 @@ async def health_check():
         return {
             "status": "healthy",
             "redis": "connected" if redis_status else "disconnected",
-            "database": "connected",
+            "database": db_status,
             "queues": queue_sizes,
             "timestamp": datetime.now().isoformat()
         }
@@ -277,12 +285,19 @@ async def ai_conversation(request: AIConversationRequest):
 @app.get("/api/v1/task/{task_id}/status")
 async def get_task_status(task_id: str):
     """Get task status"""
+    print(f"🔍 DEBUG: Getting status for task {task_id}")
+    
     try:
         status = await redis.get_task_status(task_id)
+        print(f"🔍 DEBUG: Redis returned: {status}")
+        print(f"🔍 DEBUG: Type of status: {type(status)}")
+        
         if not status:
+            print("🔍 DEBUG: Status is None/empty, raising 404")
             raise HTTPException(status_code=404, detail="Task not found")
         
-        return TaskStatusResponse(
+        print(f"🔍 DEBUG: Creating TaskStatusResponse...")
+        response = TaskStatusResponse(
             task_id=task_id,
             status=status.get('status', 'unknown'),
             result=status.get('result'),
@@ -290,8 +305,17 @@ async def get_task_status(task_id: str):
             created_at=status.get('created_at', ''),
             updated_at=status.get('updated_at')
         )
+        print(f"🔍 DEBUG: Response created: {response}")
         
+        return response
+        
+    except HTTPException as e:
+        print(f"🔍 DEBUG: HTTPException: {e}")
+        raise e
     except Exception as e:
+        print(f"🔍 DEBUG: Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
         logger.error(f"Error getting task status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
