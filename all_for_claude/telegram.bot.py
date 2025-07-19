@@ -618,11 +618,8 @@ class TelegramBotService:
     async def handle_task_status_update(self, channel: str, data: Dict):
         """Handle task status updates from Redis"""
         try:
-            logger.info(f"🔔 Received status update from channel: {channel}")  # ДОБАВИТЬ
-            logger.info(f"🔔 Status data: {data}")
             # Extract task_id from channel name
             task_id = channel.split(':')[-1]
-            logger.info(f"🔔 Extracted task_id: {task_id}")
             
             if task_id in self.processing_tasks:
                 task_info = self.processing_tasks[task_id]

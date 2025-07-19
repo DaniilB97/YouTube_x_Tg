@@ -370,76 +370,64 @@ class VideoProcessorService:
             logger.error(f"Error processing tasks: {e}")
     
     async def process_video_task(self, task_data: TaskData):
-        """Обрабатывает одну задачу"""
+        """
+        Обрабатывает одну задачу: пытается получить транскрипт,
+        а если не удается - скачивает аудио и передает эстафету.
+        """
         video_id = task_data.data.get('video_id')
         
         try:
+            # Сообщаем системе, что мы начали обработку
             await self.redis.set_task_status(task_data.task_id, TaskStatus.PROCESSING)
 
-            # 1. Пытаемся получить готовый транскрипт
+            # 1. Сначала пытаемся получить готовый транскрипт через API (это быстро)
             transcript, lang = self._get_transcript_via_api(video_id)
 
             if transcript:
-                # УСПЕХ: Создаем AI задачу
-                logger.info(f"✅ Transcript found for {video_id}. Enqueuing for AI processing.")
+                # УСПЕХ: Транскрипт найден! Создаем задачу на САММАРИЗАЦИЮ.
+                logger.info(f"✅ Transcript found for {video_id}. Enqueuing for summarization.")
                 
-                ai_task_data = TaskData(
-                    task_id=task_data.task_id,  # ТОТ ЖЕ ID!
-                    task_type=TaskType.SUMMARY_GENERATION,
+                summary_task = TaskData(
+                    task_id=task_data.task_id,
                     user_id=task_data.user_id,
-                    chat_id=task_data.chat_id,
-                    status=TaskStatus.PENDING,
-                    priority=task_data.priority,
-                    message_id=task_data.message_id,
+                    chat_id=task_data.chat_id,      # ✅ Добавить
+                    status=TaskStatus.PENDING, 
+                    task_type=TaskType.SUMMARY_GENERATION, # Задача на создание выжимки
                     data={
                         'transcript': transcript,
                         'language': lang,
-                        'title': task_data.data.get('title', f'YouTube Video {video_id}'),
-                        'file_format': task_data.data.get('file_format', 'both'),
-                        'user_language': task_data.data.get('user_language', 'en')
+                        'title': task_data.data.get('title', f'YouTube Video {video_id}')
                     }
                 )
-                
-                success = await self.redis.enqueue_task('ai_processing_queue', ai_task_data)
-                if success:
-                    logger.info(f"✅ Created AI task for {task_data.task_id}")
-                else:
-                    raise Exception("Failed to create AI task")
+                await self.redis.enqueue_task('ai_processing_queue', summary_task)
 
             else:
-                # ПЛАН Б: Скачиваем аудио
+                # ПЛАН Б: Готового транскрипта нет. Скачиваем аудио для Whisper.
                 logger.info(f"No transcript for {video_id}. Downloading audio for Whisper.")
                 audio_path = self._download_audio(video_id)
 
                 if audio_path:
+                    # УСПЕХ: Аудио скачано. Создаем задачу на ТРАНСКРИБАЦИЮ.
                     logger.info(f"✅ Audio downloaded for {video_id}. Enqueuing for transcription.")
                     
-                    audio_task_data = TaskData(
-                        task_id=task_data.task_id,  # ТОТ ЖЕ ID!
-                        task_type=TaskType.AUDIO_PROCESSING,
+                    transcription_task = TaskData(
+                        task_id=task_data.task_id,
                         user_id=task_data.user_id,
-                        chat_id=task_data.chat_id,
+                        chat_id=task_data.chat_id,      # ✅ Добавить
                         status=TaskStatus.PENDING,
-                        priority=task_data.priority,
-                        message_id=task_data.message_id,
+                        task_type=TaskType.AUDIO_PROCESSING, # Задача на распознавание речи
                         data={
                             'file_path': audio_path,
-                            'title': task_data.data.get('title', f'YouTube Video {video_id}'),
-                            'audio_type': 'youtube_audio',
-                            'file_format': task_data.data.get('file_format', 'both'),
-                            'user_language': task_data.data.get('user_language', 'en')
+                            'title': task_data.data.get('title', f'YouTube Video {video_id}')
                         }
                     )
-                    
-                    success = await self.redis.enqueue_task('audio_processing_queue', audio_task_data)
-                    if success:
-                        logger.info(f"✅ Created audio task for {task_data.task_id}")
-                    else:
-                        raise Exception("Failed to create audio task")
+                    await self.redis.enqueue_task('audio_processing_queue', transcription_task)
                 else:
-                    raise Exception("Failed to get transcript and download audio")
+                    # ПРОВАЛ: Не удалось даже скачать аудио
+                    raise Exception("Failed to get transcript from API and failed to download audio.")
 
         except Exception as e:
+            # Глобальная обработка ошибок: если что-то пошло не так, сообщаем об этом
             logger.error(f"❌ Failed to process video task {task_data.task_id}: {e}")
             await self.redis.set_task_status(
                 task_data.task_id,

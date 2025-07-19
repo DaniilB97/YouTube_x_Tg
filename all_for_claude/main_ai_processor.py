@@ -426,6 +426,7 @@ class AIProcessorService:
             
             if task_data.task_type == TaskType.AI_CONVERSATION:
                 result = await self.process_conversation(task_data)
+                # Complete conversation tasks immediately
                 await self.redis.set_task_status(
                     task_data.task_id, 
                     TaskStatus.COMPLETED, 
@@ -433,14 +434,14 @@ class AIProcessorService:
                 )
                 
             elif task_data.task_type == TaskType.SUMMARY_GENERATION:
-                # Генерируем саммари
+                # This is the new workflow!
                 result = await self.process_summary_generation(task_data)
                 
-                # Создаем File Manager задачу
+                # Don't complete - create File Manager task instead
                 await self.create_file_manager_task(task_data, result)
                 
             else:
-                # Legacy обработка
+                # Legacy: process summary generation (old workflow)
                 result = await self.process_summary_generation(task_data)
                 await self.redis.set_task_status(
                     task_data.task_id, 
@@ -451,7 +452,7 @@ class AIProcessorService:
             logger.info(f"✅ Completed AI task {task_data.task_id}")
             
         except Exception as e:
-            logger.error(f"❌ Error processing AI task: {e}")
+            logger.error(f"Error processing AI task: {e}")
             await self.redis.set_task_status(
                 task_data.task_id, 
                 TaskStatus.FAILED, 

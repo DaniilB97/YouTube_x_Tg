@@ -87,21 +87,10 @@ class RedisManager:
             await self.redis.expire(task_key, 3600)  # Expire in 1 hour
             
             # Publish status update for real-time notifications
-            logger.info(f"📢 Publishing status update for task {task_id}: {status.value}")
             await self.publish_message(f"task_status:{task_id}", task_data)
-            logger.info(f"✅ Status update published for task {task_id}")
             
         except Exception as e:
             logger.error(f"Error setting task status: {e}")
-
-    async def publish_message(self, channel: str, message: Dict): 
-        """Publish message to channel"""
-        try:
-            logger.info(f"📡 Publishing to channel: {channel}")  # ДОБАВИТЬ
-            await self.redis.publish(channel, json.dumps(message))
-            logger.info(f"✅ Message published to {channel}")  # ДОБАВИТЬ
-        except Exception as e:
-            logger.error(f"Error publishing message: {e}")
     
     async def get_task_status(self, task_id: str) -> Optional[Dict]:
         """Get task status"""

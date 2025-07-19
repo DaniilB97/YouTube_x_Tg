@@ -271,7 +271,7 @@ class AudioProcessorService:
             file_path = task_data.data.get('file_path')
             title = task_data.data.get('title', 'Audio File')
             
-            if audio_type in ['voice_message', 'audio_file', 'youtube_audio']:
+            if audio_type in ['voice_message', 'audio_file']:
                 # Transcription task
                 result = await self.process_transcription(task_data, file_path, title)
             elif audio_type == 'tts':
@@ -327,40 +327,9 @@ class AudioProcessorService:
         
         # Check if we need to create AI summary task
        # if task_data.data.get('create_summary', True):
-        await self.create_ai_summary_task(task_data, result)
+       #     await self.create_ai_summary_task(task_data, result)
         
         return result
-    
-    async def create_ai_summary_task(self, task_data, result):
-        """Создать задачу для AI суммаризации"""
-        try:
-            ai_task_data = TaskData(
-                task_id=task_data.task_id,  # ТОТ ЖЕ task_id!
-                task_type=TaskType.SUMMARY_GENERATION,
-                user_id=task_data.user_id,
-                chat_id=task_data.chat_id,
-                status=TaskStatus.PENDING,
-                priority=task_data.priority,
-                message_id=task_data.message_id,
-                data={
-                    'transcript': result['transcript'],
-                    'language': result['language'],
-                    'title': result['title'],
-                    'file_format': task_data.data.get('file_format', 'both'),
-                    'user_language': task_data.data.get('user_language', 'en')
-                }
-            )
-            
-            # Отправляем в AI очередь
-            success = await self.redis.enqueue_task('ai_processing_queue', ai_task_data)
-            
-            if success:
-                logger.info(f"✅ Created AI task for {task_data.task_id}")
-            else:
-                logger.error(f"❌ Failed to create AI task for {task_data.task_id}")
-                
-        except Exception as e:
-            logger.error(f"❌ Error creating AI task: {e}")
     
     async def process_tts(self, task_data: TaskData) -> Dict:
         """Process Text-to-Speech (placeholder)"""
