@@ -372,9 +372,25 @@ class VideoProcessorService:
     async def process_video_task(self, task_data: TaskData):
         """Обрабатывает одну задачу"""
         video_id = task_data.data.get('video_id')
+        processing_type = task_data.data.get('processing_type', 'text_only')  # 🔥 ДОБАВИТЬ
         
         try:
             await self.redis.set_task_status(task_data.task_id, TaskStatus.PROCESSING)
+
+            # 🔥 НОВОЕ: Полный анализ с кадрами
+            extra_data = {}
+            if processing_type == 'full_analysis':
+                logger.info(f"🎬 Full analysis requested for {video_id} - extracting frames")
+                try:
+                    frames_data = await self.extract_video_frames(video_id)
+                    if frames_data:
+                        extra_data['frames_data'] = frames_data
+                        logger.info(f"✅ Extracted {len(frames_data)} frames for analysis")
+                    else:
+                        logger.warning("⚠️ No frames extracted, continuing with text-only analysis")
+                except Exception as frame_error:
+                    logger.error(f"❌ Frame extraction failed: {frame_error}")
+                    logger.info("📝 Falling back to text-only analysis")
 
             # 1. Пытаемся получить готовый транскрипт
             transcript, lang = self._get_transcript_via_api(video_id)
@@ -396,7 +412,9 @@ class VideoProcessorService:
                         'language': lang,
                         'title': task_data.data.get('title', f'YouTube Video {video_id}'),
                         'file_format': task_data.data.get('file_format', 'both'),
-                        'user_language': task_data.data.get('user_language', 'en')
+                        'user_language': task_data.data.get('user_language', 'en'),
+                        'processing_type': processing_type,  # 🔥 ПЕРЕДАЕМ ТИП
+                        **extra_data  # 🔥 ДОБАВЛЯЕМ КАДРЫ
                     }
                 )
                 
@@ -427,7 +445,9 @@ class VideoProcessorService:
                             'title': task_data.data.get('title', f'YouTube Video {video_id}'),
                             'audio_type': 'youtube_audio',
                             'file_format': task_data.data.get('file_format', 'both'),
-                            'user_language': task_data.data.get('user_language', 'en')
+                            'user_language': task_data.data.get('user_language', 'en'),
+                            'processing_type': processing_type,  # 🔥 ПЕРЕДАЕМ ТИП
+                            **extra_data  # 🔥 ДОБАВЛЯЕМ КАДРЫ
                         }
                     )
                     
@@ -446,6 +466,31 @@ class VideoProcessorService:
                 TaskStatus.FAILED,
                 error=f"Video processing failed: {e}"
             )
+
+    async def extract_video_frames(self, video_id: str) -> List[Dict]:
+        """Extract frames for full analysis"""
+        try:
+            # Download video for frame extraction
+            video_path = self.frame_extractor.download_video_for_analysis(video_id)
+            
+            if not video_path:
+                logger.error("Failed to download video for frame extraction")
+                return []
+            
+            # Extract key frames
+            frames_data = self.frame_extractor.extract_key_frames(video_path, max_frames=10)
+            
+            # Cleanup video file (keep frames)
+            try:
+                os.remove(video_path)
+            except:
+                pass
+            
+            return frames_data
+            
+        except Exception as e:
+            logger.error(f"Error in extract_video_frames: {e}")
+            return []
 
     def _get_transcript_via_api(self, video_id: str) -> Optional[Tuple[str, str]]:
         """Пытается получить транскрипт через YouTubeTranscriptApi."""

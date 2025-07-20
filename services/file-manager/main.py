@@ -40,8 +40,8 @@ class TXTGenerator:
     def __init__(self):
         pass
     
-    async def generate_txt(self, summaries: Dict, title: str, file_path: str) -> bool:
-        """Generate TXT file from summaries"""
+    async def generate_txt(self, summaries: Dict, title: str, file_path: str, frames_data: list = None) -> bool:
+        """Generate TXT file from summaries with optional frames"""
         try:
             content_lines = []
             
@@ -59,8 +59,15 @@ class TXTGenerator:
             content_lines.append("1. Short Summary")
             content_lines.append("2. Medium Summary") 
             content_lines.append("3. Detailed Analysis")
+            
+            # 🔥 ДОБАВИТЬ КАДРЫ В СОДЕРЖАНИЕ:
+            section_num = 4
+            if frames_data:
+                content_lines.append(f"{section_num}. Video Frames")
+                section_num += 1
+                
             if summaries.get('transcript'):
-                content_lines.append("4. Original Transcript")
+                content_lines.append(f"{section_num}. Original Transcript")
             content_lines.append("")
             content_lines.append("-" * 50)
             content_lines.append("")
@@ -92,10 +99,30 @@ class TXTGenerator:
                 content_lines.append("-" * 50)
                 content_lines.append("")
             
+            # 🔥 ДОБАВИТЬ СЕКЦИЮ КАДРОВ:
+            if frames_data:
+                content_lines.append("4. VIDEO FRAMES")
+                content_lines.append("-" * 14)
+                content_lines.append("Key moments from the video with corresponding content:")
+                content_lines.append("")
+                
+                for i, frame in enumerate(frames_data, 1):
+                    timestamp = frame.get('formatted_timestamp', '00:00')
+                    segment = frame.get('transcript_segment', 'No transcript available')
+                    filename = frame.get('filename', f'frame_{i}.jpg')
+                    
+                    content_lines.append(f"FRAME {i} - {timestamp}")
+                    content_lines.append(f"File: {filename}")
+                    content_lines.append(f"Context: {segment}")
+                    content_lines.append("")
+                    content_lines.append("-" * 30)
+                    content_lines.append("")
+            
             # Original transcript
             if summaries.get('transcript'):
-                content_lines.append("4. ORIGINAL TRANSCRIPT")
-                content_lines.append("-" * 22)
+                section_title = f"{section_num}. ORIGINAL TRANSCRIPT" if frames_data else "4. ORIGINAL TRANSCRIPT"
+                content_lines.append(section_title)
+                content_lines.append("-" * len(section_title))
                 transcript = summaries['transcript']
                 if len(transcript) > 3000:
                     transcript = transcript[:3000] + "... [truncated]"
@@ -175,8 +202,8 @@ class PDFGenerator:
             backColor=colors.lightgrey
         )
     
-    async def generate_pdf(self, summaries: Dict, title: str, file_path: str) -> bool:
-        """Generate PDF file from summaries"""
+    async def generate_pdf(self, summaries: Dict, title: str, file_path: str, frames_data: list = None) -> bool:
+        """Generate PDF file from summaries with optional frames"""
         try:
             # Create document
             doc = SimpleDocTemplate(
@@ -209,6 +236,10 @@ class PDFGenerator:
                 ['Medium Summary', '2'],
                 ['Detailed Analysis', '3']
             ]
+            
+            # 🔥 ДОБАВИТЬ КАДРЫ В СОДЕРЖАНИЕ:
+            if frames_data:
+                toc_data.append(['Video Frames', '4'])
             
             toc_table = Table(toc_data, colWidths=[4*inch, 1*inch])
             toc_table.setStyle(TableStyle([
@@ -243,6 +274,40 @@ class PDFGenerator:
                 story.append(Paragraph(summaries['summary_detailed'], self.body_style))
                 story.append(Spacer(1, 20))
             
+            # 🔥 ДОБАВИТЬ СЕКЦИЮ КАДРОВ:
+            if frames_data:
+                from reportlab.lib.utils import ImageReader
+                from reportlab.platypus import Image
+                
+                story.append(Paragraph("🎬 Video Frames", self.header_style))
+                story.append(Paragraph("Key moments from the video with corresponding content:", self.body_style))
+                story.append(Spacer(1, 15))
+                
+                for i, frame in enumerate(frames_data, 1):
+                    timestamp = frame.get('formatted_timestamp', '00:00')
+                    segment = frame.get('transcript_segment', 'No transcript available')
+                    frame_path = frame.get('path')
+                    
+                    # Frame title
+                    frame_title = f"Frame {i} - {timestamp}"
+                    story.append(Paragraph(frame_title, self.header_style))
+                    
+                    # Add image if exists
+                    if frame_path and os.path.exists(frame_path):
+                        try:
+                            # Resize image to fit page
+                            img = Image(frame_path, width=4*inch, height=3*inch)
+                            story.append(img)
+                            story.append(Spacer(1, 10))
+                        except Exception as img_error:
+                            logger.warning(f"Could not add image {frame_path}: {img_error}")
+                            story.append(Paragraph(f"[Image: {frame.get('filename', 'frame.jpg')}]", self.body_style))
+                            story.append(Spacer(1, 10))
+                    
+                    # Add context text
+                    story.append(Paragraph(f"<b>Context:</b> {segment}", self.body_style))
+                    story.append(Spacer(1, 15))
+            
             # Additional info
             if summaries.get('transcript'):
                 story.append(Paragraph("📄 Original Transcript", self.header_style))
@@ -273,8 +338,8 @@ class MarkdownGenerator:
     def __init__(self):
         pass
     
-    async def generate_markdown(self, summaries: Dict, title: str, file_path: str) -> bool:
-        """Generate Markdown file from summaries"""
+    async def generate_markdown(self, summaries: Dict, title: str, file_path: str, frames_data: list = None) -> bool:
+        """Generate Markdown file from summaries with optional frames"""
         try:
             content_lines = []
             
@@ -289,6 +354,11 @@ class MarkdownGenerator:
             content_lines.append("- [📝 Short Summary](#short-summary)")
             content_lines.append("- [📖 Medium Summary](#medium-summary)")
             content_lines.append("- [🔍 Detailed Analysis](#detailed-analysis)")
+            
+            # 🔥 ДОБАВИТЬ КАДРЫ В СОДЕРЖАНИЕ:
+            if frames_data:
+                content_lines.append("- [🎬 Video Frames](#video-frames)")
+                
             if summaries.get('transcript'):
                 content_lines.append("- [📄 Original Transcript](#original-transcript)")
             content_lines.append("\n---\n")
@@ -311,11 +381,25 @@ class MarkdownGenerator:
                 content_lines.append(f"{summaries['summary_detailed']}\n")
                 content_lines.append("---\n")
             
+            # 🔥 ДОБАВИТЬ СЕКЦИЮ КАДРОВ:
+            if frames_data:
+                content_lines.append("## 🎬 Video Frames\n")
+                content_lines.append("*Key moments from the video with corresponding content:*\n")
+                
+                for i, frame in enumerate(frames_data, 1):
+                    timestamp = frame.get('formatted_timestamp', '00:00')
+                    segment = frame.get('transcript_segment', 'No transcript available')
+                    filename = frame.get('filename', f'frame_{i}.jpg')
+                    
+                    content_lines.append(f"### Frame {i} - {timestamp}\n")
+                    content_lines.append(f"![Frame {i}]({filename})\n")
+                    content_lines.append(f"**Context:** {segment}\n")
+                    content_lines.append("---\n")
+            
             # Original transcript (if available)
             if summaries.get('transcript'):
                 content_lines.append("## 📄 Original Transcript\n")
                 content_lines.append("```")
-                # Truncate very long transcripts
                 transcript = summaries['transcript']
                 if len(transcript) > 3000:
                     transcript = transcript[:3000] + "... [truncated]"
@@ -365,6 +449,63 @@ class FileManagerService:
             logger.error(f"Failed to create storage directory: {e}")
             raise
     
+    def process_frames_with_transcript(self, frames_data: list, summaries: dict) -> list:
+        """Process frames and match with transcript segments"""
+        if not frames_data:
+            return []
+        
+        try:
+            # Получаем транскрипт из саммари
+            transcript = ""
+            for key in ['summary_detailed', 'summary_medium', 'summary_short']:
+                if key in summaries:
+                    transcript = summaries[key]
+                    break
+            
+            enhanced_frames = []
+            total_length = len(transcript.split()) if transcript else 100
+            
+            for frame in frames_data:
+                timestamp = frame.get('timestamp', 0)
+                
+                # Примерно сопоставляем текст по времени
+                # Простая логика: разбиваем текст пропорционально времени
+                if transcript and total_length > 0:
+                    # Предполагаем что видео идет последовательно
+                    word_per_second = total_length / max(timestamp + 30, 60)  # примерная скорость речи
+                    start_word = max(0, int((timestamp - 10) * word_per_second))
+                    end_word = min(total_length, int((timestamp + 10) * word_per_second))
+                    
+                    words = transcript.split()
+                    segment = ' '.join(words[start_word:end_word])
+                    
+                    # Ограничиваем длину сегмента
+                    if len(segment) > 200:
+                        segment = segment[:200] + "..."
+                else:
+                    segment = f"Кадр в момент {self.format_timestamp(timestamp)}"
+                
+                enhanced_frame = {
+                    **frame,
+                    'transcript_segment': segment,
+                    'formatted_timestamp': self.format_timestamp(timestamp)
+                }
+                
+                enhanced_frames.append(enhanced_frame)
+            
+            logger.info(f"✅ Processed {len(enhanced_frames)} frames with transcript segments")
+            return enhanced_frames
+            
+        except Exception as e:
+            logger.error(f"Error processing frames: {e}")
+            return frames_data
+
+    def format_timestamp(self, seconds: float) -> str:
+        """Format timestamp as MM:SS"""
+        minutes = int(seconds // 60)
+        secs = int(seconds % 60)
+        return f"{minutes:02d}:{secs:02d}"
+
     async def start(self):
         """Start the File Manager service"""
         await self.redis.connect()
@@ -400,6 +541,21 @@ class FileManagerService:
             title = task_data.data.get('title', 'YouTube Video Summary')
             file_format = task_data.data.get('file_format', 'both')
             original_task_id = task_data.data.get('original_task_id')
+
+            # 🔥 ДОБАВИТЬ ОБРАБОТКУ КАДРОВ:
+            frames_data = task_data.data.get('frames_data', [])
+            enhanced_frames = []
+
+            logger.info(f"🔍 DEBUG: frames_data type: {type(frames_data)}")
+            logger.info(f"🔍 DEBUG: frames_data length: {len(frames_data) if frames_data else 0}")
+            logger.info(f"🔍 DEBUG: task_data.data keys: {list(task_data.data.keys())}")
+            
+            if frames_data:
+                logger.info(f"📸 Processing {len(frames_data)} frames for file generation")
+                enhanced_frames = self.process_frames_with_transcript(frames_data, summaries)
+                logger.info(f"🔍 DEBUG: enhanced_frames length: {len(enhanced_frames)}")
+            else:
+                logger.info("⚠️ No frames_data found in task")
             
             # Generate unique filename
             file_id = str(uuid.uuid4())[:8]
@@ -412,7 +568,7 @@ class FileManagerService:
                 txt_filename = f"{safe_title}_{file_id}.txt"
                 txt_path = os.path.join(self.storage_dir, txt_filename)
                 
-                if await self.txt_generator.generate_txt(summaries, title, txt_path):
+                if await self.txt_generator.generate_txt(summaries, title, txt_path, enhanced_frames):
                     generated_files.append({
                         'type': 'txt',
                         'filename': txt_filename,
@@ -426,7 +582,7 @@ class FileManagerService:
                 pdf_filename = f"{safe_title}_{file_id}.pdf"
                 pdf_path = os.path.join(self.storage_dir, pdf_filename)
                 
-                if await self.pdf_generator.generate_pdf(summaries, title, pdf_path):
+                if await self.pdf_generator.generate_pdf(summaries, title, pdf_path, enhanced_frames):
                     generated_files.append({
                         'type': 'pdf',
                         'filename': pdf_filename,
@@ -439,7 +595,7 @@ class FileManagerService:
                 md_filename = f"{safe_title}_{file_id}.md"
                 md_path = os.path.join(self.storage_dir, md_filename)
                 
-                if await self.markdown_generator.generate_markdown(summaries, title, md_path):
+                if await self.markdown_generator.generate_markdown(summaries, title, md_path, enhanced_frames):
                     generated_files.append({
                         'type': 'markdown',
                         'filename': md_filename,
@@ -475,6 +631,7 @@ class FileManagerService:
                 logger.info(f"✅ Generated {len(generated_files)} files for task {task_data.task_id}")
             else:
                 raise Exception("No files were generated successfully")
+                    
             
         except Exception as e:
             logger.error(f"Error processing file task: {e}")

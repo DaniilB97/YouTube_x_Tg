@@ -5,7 +5,7 @@ import os
 import asyncio
 import logging
 from datetime import datetime
-from typing import Optional, Dict
+from typing import Optional, Dict, List, Tuple 
 
 # Import shared components
 import sys
@@ -122,8 +122,20 @@ class AIProcessor:
         except Exception as e:
             logger.warning(f"⚠️ Error pulling model: {e}")
     
-    async def generate_summary(self, transcript: str, summary_type: str, title: str, language: str = 'en') -> str:
-        """Generate summary using available AI service"""
+    async def generate_summary(self, transcript: str, summary_type: str, title: str, language: str = 'en', visual_context: str = "") -> str:
+        """Generate summary using available AI service with optional visual context"""
+        
+        # 🔥 ДОБАВИТЬ ОБРАБОТКУ ВИЗУАЛЬНОГО КОНТЕКСТА:
+        if visual_context:
+            enhanced_transcript = f"""
+    {visual_context}
+
+    АУДИО ТРАНСКРИПТ:
+    {transcript}
+    """
+            logger.info("🎬 Including visual context in summary generation")
+        else:
+            enhanced_transcript = transcript
         
         # Convert string to SummaryType enum
         if summary_type == 'short':
@@ -135,34 +147,34 @@ class AIProcessor:
         else:
             summary_enum = SummaryType.SHORT
         
-        # Try Ollama first (faster, local, free)
-        if self.ollama_available:
-            try:
-                logger.info("🤖 Generating summary with Ollama...")
-                summary = await self._generate_with_ollama(transcript, summary_enum, title, language)
-                if summary and len(summary.strip()) > 10:
-                    logger.info("✅ Generated summary with Ollama")
-                    return summary
-                else:
-                    logger.warning("⚠️ Ollama returned empty/short summary")
-            except Exception as e:
-                logger.error(f"❌ Ollama failed: {e}")
-                self.ollama_available = False
-        
-        # Fallback to Gemini
+        # 🔥 ЗАМЕНИТЬ transcript НА enhanced_transcript В ВЫЗОВАХ:
         if self.gemini_available:
             try:
                 logger.info("🤖 Generating summary with Gemini...")
-                summary = await self._generate_with_gemini(transcript, summary_enum, title, language)
+                summary = await self._generate_with_gemini(enhanced_transcript, summary_enum, title, language)
                 if summary and len(summary.strip()) > 10:
                     logger.info("✅ Generated summary with Gemini")
                     return summary
+                else:
+                    logger.warning("⚠️ Gemini returned empty/short summary")
             except Exception as e:
                 logger.error(f"❌ Gemini failed: {e}")
-        
+                self.gemini_available = False
+
+        # Fallback to Ollama
+        if self.ollama_available:
+            try:
+                logger.info("🤖 Generating summary with Ollama...")
+                summary = await self._generate_with_ollama(enhanced_transcript, summary_enum, title, language)
+                if summary and len(summary.strip()) > 10:
+                    logger.info("✅ Generated summary with Ollama")
+                    return summary
+            except Exception as e:
+                logger.error(f"❌ Ollama failed: {e}")
+
         # If both fail, return error message
         logger.warning("⚠️ All AI services failed, using fallback")
-        return self._get_fallback_summary(transcript, summary_enum, title)
+        return self._get_fallback_summary(enhanced_transcript, summary_enum, title)
     
     async def _generate_with_ollama(self, transcript: str, summary_type: SummaryType, title: str, language: str) -> str:
         """Generate summary using Ollama API"""
@@ -483,20 +495,120 @@ class AIProcessorService:
         transcript = task_data.data.get('transcript')
         title = task_data.data.get('title', 'Video')
         language = task_data.data.get('language', 'en')
+        processing_type = task_data.data.get('processing_type', 'text_only')  # 🔥 ДОБАВИТЬ
+        frames_data = task_data.data.get('frames_data', [])  # 🔥 ДОБАВИТЬ
         
         if not transcript:
             raise Exception("No transcript provided")
         
-        # Generate all three types of summaries
+        # 🔥 НОВОЕ: Анализ кадров для полного анализа
+        visual_context = ""
+        if processing_type == 'full_analysis' and frames_data:
+            logger.info(f"🎬 Analyzing {len(frames_data)} frames for visual context")
+            visual_context = await self.analyze_video_frames(frames_data, title)
+        
+        # Generate all three types of summaries with visual context
         summaries = {}
         for summary_type in ['short', 'medium', 'detailed']:
+            # 🔥 ПЕРЕДАЕМ ВИЗУАЛЬНЫЙ КОНТЕКСТ
             summary = await self.ai_processor.generate_summary(
-                transcript, summary_type, title, language
+                transcript, 
+                summary_type, 
+                title, 
+                language,
+                visual_context=visual_context  # 🔥 НОВЫЙ ПАРАМЕТР
             )
             summaries[f'summary_{summary_type}'] = summary
         
         return summaries
     
+    async def analyze_video_frames(self, frames_data: List[Dict], title: str) -> str:
+        """Analyze video frames and generate visual context"""
+        try:
+            if not frames_data:
+                return ""
+            
+            logger.info(f"🎬 Starting frame analysis for {len(frames_data)} frames")
+            
+            # Группируем кадры по типу контента
+            text_frames = [f for f in frames_data if f.get('analysis', {}).get('has_text', False)]
+            chart_frames = [f for f in frames_data if f.get('analysis', {}).get('has_charts', False)]
+            key_frames = [f for f in frames_data if f.get('is_key_frame', False)]
+            
+            visual_insights = []
+            
+            # Анализируем ключевые кадры
+            if key_frames:
+                visual_insights.append(f"📸 Обнаружено {len(key_frames)} ключевых визуальных сцен")
+            
+            # Анализируем текстовый контент
+            if text_frames:
+                visual_insights.append(f"📝 Найдено {len(text_frames)} кадров с текстом/презентациями")
+            
+            # Анализируем графики и диаграммы
+            if chart_frames:
+                visual_insights.append(f"📊 Обнаружено {len(chart_frames)} кадров с графиками/диаграммами")
+            
+            # Временная разметка
+            if frames_data:
+                timestamps = [f.get('timestamp', 0) for f in frames_data]
+                total_duration = max(timestamps) if timestamps else 0
+                visual_insights.append(f"⏱️ Визуальный анализ покрывает {total_duration:.1f} секунд видео")
+            
+            # Формируем контекст для AI
+            if visual_insights:
+                visual_context = f"""
+    ВИЗУАЛЬНЫЙ КОНТЕКСТ ВИДЕО "{title}":
+    {chr(10).join(visual_insights)}
+
+    Дополнительные детали:
+    - Общее количество проанализированных кадров: {len(frames_data)}
+    - Кадры с высокой сложностью (много деталей): {len([f for f in frames_data if f.get('analysis', {}).get('edge_density', 0) > 0.1])}
+    - Яркие кадры (хорошее освещение): {len([f for f in frames_data if f.get('analysis', {}).get('brightness', 0) > 100])}
+
+    ИНСТРУКЦИЯ: Используй этот визуальный контекст для создания более полного и точного анализа видео.
+    """
+                return visual_context
+            
+            return ""
+            
+        except Exception as e:
+            logger.error(f"❌ Error analyzing frames: {e}")
+            return ""
+
+    def match_frames_with_transcript(self, frames_data: list, transcript: str) -> list:
+        """Match video frames with corresponding transcript segments"""
+        try:
+            # Парсим транскрипт на сегменты с временными метками
+            # (если есть метки) или разбиваем равномерно
+            
+            enhanced_frames = []
+            for frame in frames_data:
+                timestamp = frame.get('timestamp', 0)
+                
+                # Находим текст для этого временного отрезка (±5 сек)
+                start_time = max(0, timestamp - 5)
+                end_time = timestamp + 5
+                
+                # Извлекаем соответствующий сегмент текста
+                segment_text = self.extract_transcript_segment(
+                    transcript, start_time, end_time, timestamp
+                )
+                
+                enhanced_frame = {
+                    **frame,
+                    'transcript_segment': segment_text,
+                    'formatted_timestamp': self.format_timestamp(timestamp)
+                }
+                
+                enhanced_frames.append(enhanced_frame)
+            
+            return enhanced_frames
+            
+        except Exception as e:
+            logger.error(f"Error matching frames with transcript: {e}")
+            return frames_data
+
     async def create_file_manager_task(self, original_task: TaskData, summaries: Dict):
         """Create File Manager task after generating summaries"""
         try:

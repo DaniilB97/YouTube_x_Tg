@@ -12,6 +12,7 @@ import aiohttp
 import re
 import uuid 
 import json
+import yt_dlp
 
 # Import shared components
 import sys
@@ -280,10 +281,10 @@ class TelegramBotService:
             await self.handle_callback_query(event)
     
     async def handle_start_command(self, event):
-        """Handle /start command"""
+        """Handle /start command with main menu"""
         try:
-            telegram_user_id = str(event.sender_id)  # "6323016773"
-            user_id = self.telegram_id_to_uuid(telegram_user_id)  # Convert to UUID
+            telegram_user_id = str(event.sender_id)
+            user_id = self.telegram_id_to_uuid(telegram_user_id)
             username = event.sender.username or f"user_{telegram_user_id}"
             
             # Get or create user
@@ -295,7 +296,26 @@ class TelegramBotService:
                 username=username
             )
             
-            await event.reply(welcome_msg)
+            # 🔥 ПОСТОЯННЫЕ КНОПКИ ВНИЗУ ЭКРАНА:
+            from telethon.tl.types import KeyboardButtonRow, KeyboardButton, ReplyKeyboardMarkup
+            
+            permanent_keyboard = ReplyKeyboardMarkup(
+                rows=[
+                    KeyboardButtonRow([
+                        KeyboardButton("📹 Обработать видео"),
+                        KeyboardButton("💬 Мои видео")
+                    ]),
+                    KeyboardButtonRow([
+                        KeyboardButton("🌐 Язык"),
+                        KeyboardButton("📊 История"),
+                        KeyboardButton("⭐ Отзыв")
+                    ])
+                ],
+                resize=True,
+                persistent=True
+            )
+            
+            await event.reply(welcome_msg, buttons=permanent_keyboard)
             
         except Exception as e:
             logger.error(f"Error in start command: {e}")
@@ -368,12 +388,41 @@ class TelegramBotService:
                 return
             
             telegram_user_id = str(event.sender_id)
-            user_id = self.telegram_id_to_uuid(telegram_user_id)  # Convert to UUID
+            user_id = self.telegram_id_to_uuid(telegram_user_id)
             username = event.sender.username or f"user_{telegram_user_id}"
             
+            # 🔥 ДОБАВИТЬ ЭТУ СТРОКУ СЮДА:
+            message_text = event.message.text
+
+            
+            
+            # Проверка отзывов
+            if hasattr(self, 'waiting_for_feedback') and event.sender_id in self.waiting_for_feedback:
+                feedback_state = self.waiting_for_feedback[event.sender_id]
+                if feedback_state.get('step') == 'waiting_comment':
+                    comment = message_text
+                    rating = feedback_state['rating']
+                    await self.finish_feedback(event, rating, comment)
+                    return
+
             user = await self.get_or_create_user(user_id, username)
             
-            message_text = event.message.text
+            if message_text:
+                if message_text == "📹 Обработать видео":
+                    await self.show_video_input_prompt(event)
+                    return
+                elif message_text == "💬 Мои видео":
+                    await self.show_my_videos(event)
+                    return
+                elif message_text == "🌐 Язык":
+                    await self.show_language_selection(event)
+                    return
+                elif message_text == "📊 История":
+                    await self.show_history(event)
+                    return
+                elif message_text == "⭐ Отзыв":
+                    await self.show_feedback_rating(event)
+                    return
             
             # YouTube URLs
             if message_text and self.youtube_url_pattern.search(message_text):
@@ -393,7 +442,7 @@ class TelegramBotService:
                     return
             
             # Default response
-            default_msg = self.language_manager.get_text(user.language, 'default_response')
+            default_msg = self.language_manager.get_text(user.language, 'send_youtube_url')
             await event.reply(default_msg)
             
         except Exception as e:
@@ -410,12 +459,34 @@ class TelegramBotService:
                 await self.handle_language_selection(event, data, user_id)
             
             # 🔥 НОВОЕ: Обработка кнопок типа процессинга
+            elif data == "menu_process_video":
+                await self.show_video_input_prompt(event)
+            elif data == "menu_my_videos":
+                await self.show_my_videos(event)
+            elif data == "menu_language":
+                await self.show_language_selection(event)
+            elif data == "menu_history":
+                await self.show_history(event)
+            elif data == "menu_feedback":
+                await self.show_feedback_rating(event)
             elif data == "process_text_only":
                 await self.handle_process_selection(event, "text_only", "txt")
             elif data == "process_files":
                 await self.show_file_format_selection(event)
             elif data == "process_full":
                 await self.show_full_analysis_selection(event)
+            elif data == "back_to_menu":
+                await self.show_main_menu(event)
+            elif data.startswith("rate_"):
+                rating = int(data.replace("rate_", ""))
+                await self.handle_rating_selection(event, rating)
+            elif data.startswith("comment_"):
+                rating = int(data.replace("comment_", ""))
+                await self.show_comment_input(event, rating)
+            elif data.startswith("finish_feedback_"):
+                rating = int(data.replace("finish_feedback_", ""))
+                await self.finish_feedback(event, rating, None)
+            
                 
             # 🔥 НОВОЕ: Обработка кнопок формата файлов
             elif data.startswith("format_"):
@@ -455,6 +526,167 @@ class TelegramBotService:
             logger.error(f"Error in language selection: {e}")
             await event.answer("Error occurred")
     
+    async def show_main_menu(self, event):
+        """Show main menu"""
+        main_menu = [
+            [Button.inline("📹 Обработать видео", data="menu_process_video")],
+            [Button.inline("💬 Мои видео", data="menu_my_videos"),
+            Button.inline("🌐 Язык", data="menu_language")],
+            [Button.inline("📊 История", data="menu_history"),
+            Button.inline("⭐ Отзыв", data="menu_feedback")]
+        ]
+        
+        await event.edit("🤖 **YouTube Summarizer Bot**\n\nВыберите действие:", buttons=main_menu)
+
+    async def show_video_input_prompt(self, event):
+        """Show video input prompt"""
+        msg = "📹 **Отправьте YouTube ссылку**\n\nПришлите ссылку на видео которое хотите обработать:"
+        buttons = [[Button.inline("🔙 Назад в меню", data="back_to_menu")]]
+        
+        try:
+            if hasattr(event, 'message') and event.message:
+                await event.reply(msg, buttons=buttons)
+            else:
+                await event.edit(msg, buttons=buttons)
+        except Exception as e:
+            logger.error(f"Error showing video input prompt: {e}")
+            await event.reply(msg, buttons=buttons)
+
+    async def show_my_videos(self, event):
+        """Show user's processed videos"""
+        msg = "💬 **Ваши видео**\n\n🚧 Функция в разработке...\n\nСкоро здесь будет список ваших обработанных видео с возможностью обсуждения!"
+        buttons = [[Button.inline("🔙 Назад в меню", data="back_to_menu")]]
+        
+        try:
+            if hasattr(event, 'message') and event.message:
+                await event.reply(msg, buttons=buttons)
+            else:
+                await event.edit(msg, buttons=buttons)
+        except Exception as e:
+            logger.error(f"Error showing my videos: {e}")
+            await event.reply(msg, buttons=buttons)
+
+    async def show_language_selection(self, event):
+        """Show language selection menu"""
+        buttons = [
+            [Button.inline("🇷🇺 Русский", data="lang_ru"),
+            Button.inline("🇺🇸 English", data="lang_en")],
+            [Button.inline("🔙 Назад в меню", data="back_to_menu")]
+        ]
+        
+        msg = "🌐 **Выберите язык:**\n\nSelect your language:"
+        
+        try:
+            if hasattr(event, 'message') and event.message:
+                await event.reply(msg, buttons=buttons)
+            else:
+                await event.edit(msg, buttons=buttons)
+        except Exception as e:
+            logger.error(f"Error showing language selection: {e}")
+            await event.reply(msg, buttons=buttons)
+
+    async def show_history(self, event):
+        """Show processing history"""
+        try:
+            # Если это постоянная кнопка - отправляем новое сообщение
+            if hasattr(event, 'message') and event.message:
+                await event.reply(
+                    "📊 **История обработки**\n\n🚧 Функция в разработке...\n\nЗдесь будет статистика ваших обработанных видео!",
+                    buttons=[[Button.inline("🔙 Назад в меню", data="back_to_menu")]]
+                )
+            # Если это inline кнопка - редактируем сообщение
+            else:
+                await event.edit(
+                    "📊 **История обработки**\n\n🚧 Функция в разработке...\n\nЗдесь будет статистика ваших обработанных видео!",
+                    buttons=[[Button.inline("🔙 Назад в меню", data="back_to_menu")]]
+                )
+        except Exception as e:
+            logger.error(f"Error showing history: {e}")
+            await event.reply("❌ Ошибка при показе истории")
+
+    async def show_feedback_rating(self, event):
+        """Show feedback rating stars"""
+        rating_buttons = [
+            [Button.inline("⭐", data="rate_1"),
+            Button.inline("⭐⭐", data="rate_2"),
+            Button.inline("⭐⭐⭐", data="rate_3")],
+            [Button.inline("⭐⭐⭐⭐", data="rate_4"),
+            Button.inline("⭐⭐⭐⭐⭐", data="rate_5")],
+            [Button.inline("🔙 Назад в меню", data="back_to_menu")]
+        ]
+        
+        msg = "⭐ **Оцените наш сервис:**\n\nВыберите количество звезд от 1 до 5:"
+        
+        try:
+            if hasattr(event, 'message') and event.message:
+                await event.reply(msg, buttons=rating_buttons)
+            else:
+                await event.edit(msg, buttons=rating_buttons)
+        except Exception as e:
+            logger.error(f"Error showing feedback rating: {e}")
+            await event.reply(msg, buttons=rating_buttons)
+
+    async def handle_rating_selection(self, event, rating: int):
+        """Handle rating selection"""
+        # Сохраняем рейтинг пользователя
+        user_id = str(event.sender_id)
+        
+        # Показываем форму для комментария
+        comment_buttons = [
+            [Button.inline("✍️ Оставить комментарий", data=f"comment_{rating}")],
+            [Button.inline("➡️ Пропустить", data=f"finish_feedback_{rating}")],
+            [Button.inline("🔙 Назад в меню", data="back_to_menu")]
+        ]
+        
+        await event.edit(
+            f"⭐ **Спасибо за оценку {rating}/5!**\n\nХотите добавить комментарий?",
+            buttons=comment_buttons
+        )
+
+    async def show_comment_input(self, event, rating: int):
+        """Show comment input prompt"""
+        await event.edit(
+            f"✍️ **Оставьте комментарий (оценка: {rating}/5)**\n\nНапишите ваш отзыв одним сообщением:",
+            buttons=[[Button.inline("🔙 Назад к оценкам", data="menu_feedback")]]
+        )
+        
+        # Сохраняем состояние ожидания комментария
+        if not hasattr(self, 'waiting_for_feedback'):
+            self.waiting_for_feedback = {}
+        
+        self.waiting_for_feedback[event.sender_id] = {
+            'rating': rating,
+            'step': 'waiting_comment'
+        }
+
+    async def finish_feedback(self, event, rating: int, comment: str = None):
+        """Finish feedback process and save to database"""
+        try:
+            user_id = str(event.sender_id)
+            
+            # Здесь можно сохранить отзыв в базу данных
+            # await self.save_feedback(user_id, rating, comment)
+            
+            # Показываем благодарность
+            thanks_msg = f"🙏 **Спасибо за отзыв!**\n\n⭐ Оценка: {rating}/5"
+            if comment:
+                thanks_msg += f"\n💬 Комментарий: {comment[:100]}{'...' if len(comment) > 100 else ''}"
+            
+            await event.edit(
+                thanks_msg + "\n\nВаш отзыв поможет нам стать лучше!",
+                buttons=[[Button.inline("🔙 Главное меню", data="back_to_menu")]]
+            )
+            
+            # Очищаем состояние
+            if hasattr(self, 'waiting_for_feedback') and event.sender_id in self.waiting_for_feedback:
+                del self.waiting_for_feedback[event.sender_id]
+                
+            logger.info(f"Feedback received: user={user_id}, rating={rating}, comment_length={len(comment) if comment else 0}")
+            
+        except Exception as e:
+            logger.error(f"Error finishing feedback: {e}")
+            await event.edit("❌ Ошибка при сохранении отзыва")
+
     async def handle_youtube_url(self, event, user: User):
         """Handle YouTube URL processing with format selection"""
         try:
@@ -467,18 +699,46 @@ class TelegramBotService:
             
             # Получаем информацию о видео
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(f"https://www.youtube.com/oembed?url={youtube_url}&format=json") as resp:
-                        if resp.status == 200:
-                            video_info = await resp.json()
-                            title = video_info.get('title', f"YouTube Video {video_id}")
-                            author = video_info.get('author_name', 'Unknown')
-                        else:
-                            title = f"YouTube Video {video_id}"
-                            author = 'Unknown'
-            except:
-                title = f"YouTube Video {video_id}"
-                author = 'Unknown'
+                
+                # Получаем метаданные через yt-dlp
+                ydl_opts = {
+                    'quiet': True,
+                    'no_warnings': True,
+                    'extract_flat': False,
+                }
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(youtube_url, download=False)
+                    title = info.get('title', f"YouTube Video {video_id}")
+                    author = info.get('uploader', 'Unknown')
+                    duration_seconds = info.get('duration', 0)
+                    
+                    # Форматируем длительность
+                    if duration_seconds:
+                        minutes = duration_seconds // 60
+                        seconds = duration_seconds % 60
+                        duration_text = f"{minutes}:{seconds:02d}"
+                    else:
+                        duration_text = "Неизвестно"
+                        
+            except Exception as e:
+                logger.warning(f"Could not get video metadata with yt-dlp: {e}")
+                # Fallback к старому способу
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(f"https://www.youtube.com/oembed?url={youtube_url}&format=json") as resp:
+                            if resp.status == 200:
+                                video_info = await resp.json()
+                                title = video_info.get('title', f"YouTube Video {video_id}")
+                                author = video_info.get('author_name', 'Unknown')
+                            else:
+                                title = f"YouTube Video {video_id}"
+                                author = 'Unknown'
+                except:
+                    title = f"YouTube Video {video_id}"
+                    author = 'Unknown'
+                
+                duration_text = "Неизвестно"
             
             # 🔥 НОВОЕ: Отправляем кнопки выбора типа обработки
             buttons = [
@@ -488,7 +748,7 @@ class TelegramBotService:
             ]
             
             processing_msg = await event.reply(
-                f"📹 **{title}**\n👤 *{author}*\n\n🎬 Что сделать с видео?\n\nВыберите тип обработки:",
+                f"📹 **{title}**\n👤 *{author}*\n⏱️ *{duration_text}*\n\n🎬 Что сделать с видео?\n\nВыберите тип обработки:",
                 buttons=buttons
             )
             
@@ -501,6 +761,7 @@ class TelegramBotService:
                 'video_id': video_id,
                 'title': title,
                 'author': author,
+                'duration': duration_text,
                 'chat_id': event.chat_id,
                 'message_id': processing_msg.id,
                 'user': user,
@@ -654,7 +915,9 @@ class TelegramBotService:
                 task_info = self.processing_tasks[task_id]
                 status = data.get('status')
                 
-                if status == 'completed':
+                if status == 'processing':
+                    await self.update_progress_message(task_id, task_info, data)
+                elif status == 'completed':
                     await self.handle_task_completion(task_id, task_info, data)
                 elif status == 'failed':
                     await self.handle_task_failure(task_id, task_info, data)
@@ -669,7 +932,15 @@ class TelegramBotService:
             if not user:
                 return
             
-            completion_msg = self.language_manager.get_text(user.language, 'processing_completed')
+            completion_msg = f"""✅ **Обработка завершена!**
+
+    🎬 **{task_info.get('title', 'YouTube Video')}**
+    👤 *{task_info.get('author', 'Unknown')}*
+
+    📊 **Прогресс:**
+    {self.get_progress_bar(100)} 100% - Готово!
+
+    ⏱️ Обработано за {self.get_processing_time(task_id)}"""
             
             # Edit the processing message
             await self.client.edit_message(
@@ -721,7 +992,12 @@ class TelegramBotService:
             
         except Exception as e:
             logger.error(f"Error handling task completion: {e}")
-    
+    # отработать эту заглушку 
+    def get_processing_time(self, task_id: str) -> str:
+        """Calculate processing time (placeholder)"""
+        # Пока заглушка, потом можно добавить реальный подсчет
+        return "1 мин 23 сек"
+
     async def handle_task_failure(self, task_id: str, task_info: Dict, data: Dict):
         """Handle failed task"""
         try:
@@ -745,6 +1021,70 @@ class TelegramBotService:
             
         except Exception as e:
             logger.error(f"Error handling task failure: {e}")
+
+    def get_progress_bar(self, percent: int) -> str:
+        """Generate beautiful star progress bar"""
+        filled = int(percent / 10)
+        return '⭐' * filled + '⚫' * (10 - filled)
+
+    def get_processing_stage(self, data: Dict, result: Dict) -> Dict:
+        """Determine processing stage based on data"""
+        # Анализируем откуда пришло обновление
+        if 'transcript' in result:
+            # Audio Processor завершил
+            return {
+                'bar': self.get_progress_bar(60),
+                'percent': 60,
+                'message': 'Генерирую саммари с ИИ...',
+                'time_estimate': 'Осталось ~30-60 секунд'
+            }
+        elif 'summaries' in result:
+            # AI Processor завершил
+            return {
+                'bar': self.get_progress_bar(90),
+                'percent': 90,
+                'message': 'Создаю файлы...',
+                'time_estimate': 'Осталось ~10 секунд'
+            }
+        else:
+            # Начальная стадия
+            return {
+                'bar': self.get_progress_bar(30),
+                'percent': 30,
+                'message': 'Загружаю и обрабатываю аудио...',
+                'time_estimate': 'Осталось ~1-2 минуты'
+            }
+
+    async def update_progress_message(self, task_id: str, task_info: Dict, data: Dict):
+        """Update progress message with current status"""
+        try:
+            result = data.get('result', {})
+            if isinstance(result, str):
+                result = json.loads(result)
+            
+            # Определяем этап обработки по источнику
+            stage_info = self.get_processing_stage(data, result)
+            
+            progress_msg = f"""⏳ **Обрабатываю видео...**
+
+    🎬 **{task_info.get('title', 'YouTube Video')}**
+    👤 *{task_info.get('author', 'Unknown')}*
+
+    🔧 Режим: {task_info.get('processing_type', 'files')}
+
+    📊 **Прогресс:**
+    {stage_info['bar']} {stage_info['percent']}% - {stage_info['message']}
+
+    ⏱️ {stage_info['time_estimate']}"""
+
+            await self.client.edit_message(
+                task_info['chat_id'],
+                task_info['message_id'],
+                progress_msg
+            )
+            
+        except Exception as e:
+            logger.error(f"Error updating progress: {e}")
 
     async def handle_process_selection(self, event, processing_type: str, file_format: str):
         """Handle processing type selection and start processing"""
@@ -779,7 +1119,20 @@ class TelegramBotService:
             }.get(processing_type, processing_type)
             
             # Обновляем сообщение
-            await event.edit(f"⏳ **Обрабатываю видео...**\n\n🎬 **{user_state['title']}**\n👤 *{user_state['author']}*\n\n🔧 Режим: {process_text}")
+            # 🔥 НОВОЕ:
+            progress_msg = f"""⏳ **Обрабатываю видео...**
+
+            🎬 **{user_state['title']}**
+            👤 *{user_state['author']}*
+
+            🔧 Режим: {process_text}
+
+            📊 **Прогресс:**
+            {self.get_progress_bar(0)} 0% - Подготовка...
+
+            ⏱️ Оценочное время: 1-2 минуты"""
+
+            await event.edit(progress_msg)
             
             # Отправляем запрос в API Gateway
             task_id = await self.send_video_processing_request(
