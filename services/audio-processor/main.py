@@ -283,11 +283,11 @@ class AudioProcessorService:
             else:
                 raise Exception(f"Unknown audio type: {audio_type}")
             
-            await self.redis.set_task_status(
-                task_data.task_id,
-                TaskStatus.COMPLETED,
-                result=result
-            )
+            #await self.redis.set_task_status(
+             #   task_data.task_id,
+                #TaskStatus.COMPLETED,
+             #   result=result
+            #)
             
             logger.info(f"✅ Completed audio task {task_data.task_id}")
             

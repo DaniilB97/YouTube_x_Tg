@@ -1,0 +1,7 @@
+🔍 Кратко об ошибке с Volume:
+Проблема: File Manager создавал файлы в своем контейнере /app/storage, а Telegram Bot не мог их найти - у каждого была своя изолированная файловая система.
+Решение: Добавили общий Docker volume file_storage в обе службы:
+yaml# file-manager и telegram-bot
+volumes:
+  - file_storage:/app/storage  # Общая папка
+Результат: Теперь оба сервиса видят одни и те же файлы.

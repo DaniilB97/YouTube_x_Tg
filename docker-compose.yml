@@ -91,6 +91,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./shared:/app/shared:ro
+      - file_storage:/app/storage
     networks:
       - app-network
 

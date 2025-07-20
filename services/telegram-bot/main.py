@@ -409,6 +409,24 @@ class TelegramBotService:
             if data.startswith('lang_'):
                 await self.handle_language_selection(event, data, user_id)
             
+            # 🔥 НОВОЕ: Обработка кнопок типа процессинга
+            elif data == "process_text_only":
+                await self.handle_process_selection(event, "text_only", "txt")
+            elif data == "process_files":
+                await self.show_file_format_selection(event)
+            elif data == "process_full":
+                await self.show_full_analysis_selection(event)
+                
+            # 🔥 НОВОЕ: Обработка кнопок формата файлов
+            elif data.startswith("format_"):
+                format_type = data.replace("format_", "")
+                await self.handle_process_selection(event, "files", format_type)
+                
+            # 🔥 НОВОЕ: Обработка кнопок полного анализа
+            elif data.startswith("full_"):
+                format_type = data.replace("full_", "")
+                await self.handle_process_selection(event, "full_analysis", format_type)
+            
             await event.answer()
             
         except Exception as e:
@@ -438,7 +456,7 @@ class TelegramBotService:
             await event.answer("Error occurred")
     
     async def handle_youtube_url(self, event, user: User):
-        """Handle YouTube URL processing"""
+        """Handle YouTube URL processing with format selection"""
         try:
             youtube_url = event.message.text
             video_id = extract_youtube_video_id(youtube_url)
@@ -461,33 +479,35 @@ class TelegramBotService:
             except:
                 title = f"YouTube Video {video_id}"
                 author = 'Unknown'
-
-            duration_text = "Определяем длительность..." if user.language == 'ru' else "Getting duration..."
             
-            # Send processing message
+            # 🔥 НОВОЕ: Отправляем кнопки выбора типа обработки
+            buttons = [
+                [Button.inline("📝 Только текст", data="process_text_only")],
+                [Button.inline("📄 Файлы", data="process_files"), 
+                    Button.inline("🎬 Полный анализ", data="process_full")],
+            ]
+            
             processing_msg = await event.reply(
-                self.language_manager.get_text(
-                    user.language, 
-                    'processing_video',
-                    title=title,
-                    duration=duration_text
-                )
+                f"📹 **{title}**\n👤 *{author}*\n\n🎬 Что сделать с видео?\n\nВыберите тип обработки:",
+                buttons=buttons
             )
             
-            # Send request to API Gateway
-            task_id = await self.send_video_processing_request(user, youtube_url, event.chat_id)
+            # 🔥 НОВОЕ: Сохраняем состояние пользователя вместо сразу отправки запроса
+            if not hasattr(self, 'user_states'):
+                self.user_states = {}
+                
+            self.user_states[event.sender_id] = {
+                'url': youtube_url,
+                'video_id': video_id,
+                'title': title,
+                'author': author,
+                'chat_id': event.chat_id,
+                'message_id': processing_msg.id,
+                'user': user,
+                'step': 'awaiting_process_type'
+            }
             
-            if task_id:
-                # Store task info for status updates
-                self.processing_tasks[task_id] = {
-                    'user_id': user.user_id,
-                    'chat_id': event.chat_id,
-                    'message_id': processing_msg.id,
-                    'type': 'video'
-                }
-                logger.info(f"Video processing task created: {task_id}")
-            else:
-                await processing_msg.edit(self.language_manager.get_text(user.language, 'processing_failed'))
+            logger.info(f"Video selection UI shown for: {title}")
             
         except Exception as e:
             logger.error(f"Error handling YouTube URL: {e}")
@@ -562,7 +582,7 @@ class TelegramBotService:
         except Exception as e:
             logger.error(f"Error handling audio file: {e}")
     
-    async def send_video_processing_request(self, user: User, youtube_url: str, chat_id: int) -> Optional[str]:
+    async def send_video_processing_request(self, user: User, youtube_url: str, chat_id: int, processing_type: str = "text_only", file_format: str = "txt") -> Optional[str]:
         """Send video processing request to API Gateway"""
         try:
             async with aiohttp.ClientSession() as session:
@@ -570,8 +590,8 @@ class TelegramBotService:
                     "user_id": user.user_id,
                     "chat_id": chat_id,
                     "youtube_url": youtube_url,
-                    "processing_type": "text_only",
-                    "file_format": "markdown"
+                    "processing_type": processing_type,
+                    "file_format": file_format
                 }
                 
                 async with session.post(
@@ -668,21 +688,33 @@ class TelegramBotService:
                 await self.client.send_message(task_info['chat_id'], f"📝 **Summary:**\n{summary}")
                 
                 # 🔥 ДОБАВИТЬ ОТПРАВКУ ФАЙЛА:
-                file_path = result.get('file_path')
-                if file_path:
-                    try:
-                        await self.client.send_file(
-                            task_info['chat_id'], 
-                            file_path,
-                            caption="📄 Complete summary file"
-                        )
-                        logger.info(f"✅ File sent: {file_path}")
-                    except Exception as e:
-                        logger.error(f"❌ Error sending file {file_path}: {e}")
+                # 🔥 ПРАВИЛЬНАЯ ОТПРАВКА ФАЙЛА ОТ FILE MANAGER:
+                files = result.get('files', [])
+                if files and len(files) > 0:
+                    for file_info in files:
+                        file_path = file_info.get('path')
+                        filename = file_info.get('filename', 'summary_file')
                         
-            elif task_info['type'] == 'audio':
-                transcript = result.get('transcript', 'Transcript not available')
-                await self.client.send_message(task_info['chat_id'], f"📝 **Transcript:**\n{transcript}")
+                        if file_path and file_path.endswith(('.md', '.txt', '.pdf')):
+                            logger.info(f"📤 Attempting to send file: {file_path}")
+                            try:
+                                await self.client.send_file(
+                                    task_info['chat_id'], 
+                                    file_path,
+                                    caption=f"📄 {filename}"
+                                )
+                                logger.info(f"✅ File sent successfully: {filename}")
+                            except Exception as e:
+                                logger.error(f"❌ Error sending file {file_path}: {e}")
+                        else:
+                            logger.warning(f"⚠️ Skipping invalid file: {file_path}")
+                else:
+                    logger.warning(f"❌ No files found in result. Available keys: {list(result.keys())}")
+                    # Отправляем хотя бы текстовый результат
+                    full_summary = result.get('summaries', {})
+                    if full_summary:
+                        summary_text = full_summary.get('medium', full_summary.get('short', 'No summary available'))
+                        await self.client.send_message(task_info['chat_id'], f"📄 **Полный текст:**\n\n{summary_text}")
             
             # Cleanup
             del self.processing_tasks[task_id]
@@ -713,7 +745,128 @@ class TelegramBotService:
             
         except Exception as e:
             logger.error(f"Error handling task failure: {e}")
-    
+
+    async def handle_process_selection(self, event, processing_type: str, file_format: str):
+        """Handle processing type selection and start processing"""
+        try:
+            user_state = self.user_states.get(event.sender_id)
+            if not user_state:
+                await event.edit("❌ Сессия истекла. Отправьте ссылку заново.")
+                return
+            
+            # Формируем сообщение о начале обработки
+            format_display = {
+                'txt': 'TXT',
+                'md': 'Markdown', 
+                'pdf': 'PDF',
+                'all': 'все форматы'
+            }.get(file_format, file_format.upper())
+
+            # Маппинг для File Manager (отдельно!)
+            format_mapping = {
+                'txt': 'txt',    # txt
+                'md': 'markdown',     # Markdown → Markdown файл  
+                'pdf': 'pdf',         # PDF → PDF файл
+                'all': 'both'         # Все → PDF + Markdown
+            }
+
+            mapped_format = format_mapping.get(file_format, 'markdown')
+            
+            process_text = {
+                'text_only': '📝 Только текст',
+                'files': f'📄 Файлы ({format_display})',        # ← format_display
+                'full_analysis': f'🎬 Полный анализ ({format_display})'  # ← format_display
+            }.get(processing_type, processing_type)
+            
+            # Обновляем сообщение
+            await event.edit(f"⏳ **Обрабатываю видео...**\n\n🎬 **{user_state['title']}**\n👤 *{user_state['author']}*\n\n🔧 Режим: {process_text}")
+            
+            # Отправляем запрос в API Gateway
+            task_id = await self.send_video_processing_request(
+                user=user_state['user'],
+                youtube_url=user_state['url'],
+                chat_id=user_state['chat_id'],
+                processing_type=processing_type,
+                file_format=mapped_format
+            )
+            
+            if task_id:
+                # Сохраняем информацию о задаче для отслеживания статуса
+                self.processing_tasks[task_id] = {
+                    'user_id': user_state['user'].user_id,
+                    'chat_id': user_state['chat_id'],
+                    'message_id': user_state['message_id'],
+                    'type': 'video',
+                    'processing_type': processing_type,
+                    'file_format': mapped_format
+                }
+                
+                # Убираем состояние пользователя
+                del self.user_states[event.sender_id]
+                
+                logger.info(f"Video processing task created: {task_id} ({processing_type}, {file_format})")
+            else:
+                await event.edit("❌ **Ошибка обработки**\n\nНе удалось отправить запрос. Попробуйте позже.")
+                
+        except Exception as e:
+            logger.error(f"Error in handle_process_selection: {e}")
+            await event.edit("❌ **Произошла ошибка**\n\nПопробуйте отправить ссылку заново.")
+
+    async def show_file_format_selection(self, event):
+        """Show file format selection buttons"""
+        try:
+            user_state = self.user_states.get(event.sender_id)
+            if not user_state:
+                await event.edit("❌ Сессия истекла. Отправьте ссылку заново.")
+                return
+            
+            # Кнопки выбора формата файлов
+            buttons = [
+                [Button.inline("📝 TXT", data="format_txt"),
+                Button.inline("📋 Markdown", data="format_md")],
+                [Button.inline("📄 PDF", data="format_pdf"),
+                Button.inline("📦 Все форматы", data="format_all")]
+            ]
+            
+            await event.edit(
+                f"📄 **Выберите формат файла:**\n\n🎬 **{user_state['title']}**\n👤 *{user_state['author']}*\n\nКакой формат вы предпочитаете?",
+                buttons=buttons
+            )
+            
+            # Обновляем шаг в состоянии
+            user_state['step'] = 'awaiting_file_format'
+            
+        except Exception as e:
+            logger.error(f"Error in show_file_format_selection: {e}")
+            await event.edit("❌ **Произошла ошибка**\n\nПопробуйте отправить ссылку заново.")
+
+    async def show_full_analysis_selection(self, event):
+        """Show full analysis format selection"""
+        try:
+            user_state = self.user_states.get(event.sender_id)
+            if not user_state:
+                await event.edit("❌ Сессия истекла. Отправьте ссылку заново.")
+                return
+            
+            # Кнопки выбора формата для полного анализа
+            buttons = [
+                [Button.inline("📋 MD + кадры", data="full_md")],
+                [Button.inline("📄 PDF + кадры", data="full_pdf")],
+                [Button.inline("📦 Все + кадры", data="full_all")]
+            ]
+            
+            await event.edit(
+                f"🎬 **Полный анализ с кадрами:**\n\n🎬 **{user_state['title']}**\n👤 *{user_state['author']}*\n\nВыберите формат для детального анализа видео:",
+                buttons=buttons
+            )
+            
+            # Обновляем шаг в состоянии
+            user_state['step'] = 'awaiting_full_format'
+            
+        except Exception as e:
+            logger.error(f"Error in show_full_analysis_selection: {e}")
+            await event.edit("❌ **Произошла ошибка**\n\nПопробуйте отправить ссылку заново.")
+
     async def get_or_create_user(self, user_id: str, username: str) -> User:
         """Get existing user or create new one"""
         try:
