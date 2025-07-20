@@ -143,7 +143,14 @@ class RedisManager:
         """Subscribe to channel with callback"""
         try:
             pubsub = self.redis.pubsub()
-            await pubsub.subscribe(channel)
+            
+            # 🔥 ИСПРАВЛЕНИЕ: Если канал содержит *, используем psubscribe
+            if '*' in channel:
+                await pubsub.psubscribe(channel)
+                logger.info(f"Pattern subscribed to channel {channel}")
+            else:
+                await pubsub.subscribe(channel)
+                logger.info(f"Subscribed to channel {channel}")
             
             self.subscribers[channel] = {
                 'pubsub': pubsub,
@@ -152,7 +159,6 @@ class RedisManager:
             
             # Start listening in background
             asyncio.create_task(self._listen_to_channel(channel))
-            logger.info(f"Subscribed to channel {channel}")
             
         except Exception as e:
             logger.error(f"Error subscribing to channel: {e}")
@@ -163,11 +169,20 @@ class RedisManager:
             pubsub = self.subscribers[channel]['pubsub']
             callback = self.subscribers[channel]['callback']
             
+            logger.info(f"🎧 Started listening to channel: {channel}")
+            
             async for message in pubsub.listen():
-                if message['type'] == 'message':
+                logger.info(f"🎧 Received message type: {message['type']} on {channel}")
+                
+                # 🔥 ИСПРАВЛЕНИЕ: Поддержка и message и pmessage
+                if message['type'] in ['message', 'pmessage']:
                     try:
                         data = json.loads(message['data'])
-                        await callback(channel, data)
+                        logger.info(f"🎧 Parsed message data: {data}")
+                        
+                        # Для pmessage используем pattern, для message - channel
+                        actual_channel = message.get('channel', channel)
+                        await callback(actual_channel, data)
                     except Exception as e:
                         logger.error(f"Error processing message from {channel}: {e}")
                         

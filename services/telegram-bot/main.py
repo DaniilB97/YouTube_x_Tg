@@ -11,6 +11,7 @@ from typing import Optional, Dict, Any
 import aiohttp
 import re
 import uuid 
+import json
 
 # Import shared components
 import sys
@@ -618,8 +619,13 @@ class TelegramBotService:
     async def handle_task_status_update(self, channel: str, data: Dict):
         """Handle task status updates from Redis"""
         try:
-            logger.info(f"🔔 Received status update from channel: {channel}")  # ДОБАВИТЬ
+            logger.info(f"🔔 RECEIVED status update from channel: {channel}")
             logger.info(f"🔔 Status data: {data}")
+            
+            # 🔥 ИСПРАВЛЕНИЕ: Декодируем bytes в string
+            if isinstance(channel, bytes):
+                channel = channel.decode('utf-8')
+            
             # Extract task_id from channel name
             task_id = channel.split(':')[-1]
             logger.info(f"🔔 Extracted task_id: {task_id}")
@@ -634,7 +640,7 @@ class TelegramBotService:
                     await self.handle_task_failure(task_id, task_info, data)
                     
         except Exception as e:
-            logger.error(f"Error handling task status update: {e}")
+            logger.error(f"❌ Error handling task status update: {e}")
     
     async def handle_task_completion(self, task_id: str, task_info: Dict, data: Dict):
         """Handle completed task"""
@@ -654,9 +660,26 @@ class TelegramBotService:
             
             # Send result
             result = data.get('result', {})
+            if isinstance(result, str):
+                result = json.loads(result)  # Parse JSON string
+                
             if task_info['type'] == 'video':
                 summary = result.get('summary_short', 'Summary not available')
                 await self.client.send_message(task_info['chat_id'], f"📝 **Summary:**\n{summary}")
+                
+                # 🔥 ДОБАВИТЬ ОТПРАВКУ ФАЙЛА:
+                file_path = result.get('file_path')
+                if file_path:
+                    try:
+                        await self.client.send_file(
+                            task_info['chat_id'], 
+                            file_path,
+                            caption="📄 Complete summary file"
+                        )
+                        logger.info(f"✅ File sent: {file_path}")
+                    except Exception as e:
+                        logger.error(f"❌ Error sending file {file_path}: {e}")
+                        
             elif task_info['type'] == 'audio':
                 transcript = result.get('transcript', 'Transcript not available')
                 await self.client.send_message(task_info['chat_id'], f"📝 **Transcript:**\n{transcript}")
