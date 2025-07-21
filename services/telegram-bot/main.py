@@ -852,7 +852,8 @@ class TelegramBotService:
                     "chat_id": chat_id,
                     "youtube_url": youtube_url,
                     "processing_type": processing_type,
-                    "file_format": file_format
+                    "file_format": file_format,
+                    "user_language": user.language
                 }
                 
                 async with session.post(

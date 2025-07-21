@@ -616,6 +616,9 @@ class AIProcessorService:
             
             # Create new task for File Manager
             file_task_id = generate_task_id()
+
+            # 🔥 EXTRACT frames_data from original task
+            frames_data = original_task.data.get('frames_data', [])
             
             file_task_data = TaskData(
                 task_id=file_task_id,
@@ -630,7 +633,9 @@ class AIProcessorService:
                     "summaries": summaries,
                     "title": original_task.data.get('title', 'Summary'),
                     "file_format": original_task.data.get('file_format', 'both'),  # pdf, markdown, both
-                    "user_language": original_task.data.get('user_language', 'en')
+                    "user_language": original_task.data.get('user_language', 'en'),
+                    "frames_data": frames_data,  # this fix for correct pipeline, so frames will go to FileManager
+                    "processing_type": original_task.data.get('processing_type', 'text_only') 
                 }
             )
             
@@ -639,7 +644,8 @@ class AIProcessorService:
             
             if success:
                 logger.info(f"✅ Created File Manager task {file_task_id} for original task {original_task.task_id}")
-                
+                logger.info(f"🔍 Passed {len(frames_data)} frames to File Manager") # more debugs
+
                 # Update original task status to indicate it's being processed further
                 await self.redis.set_task_status(
                     original_task.task_id,

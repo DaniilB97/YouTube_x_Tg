@@ -398,6 +398,10 @@ class VideoProcessorService:
             if transcript:
                 # УСПЕХ: Создаем AI задачу
                 logger.info(f"✅ Transcript found for {video_id}. Enqueuing for AI processing.")
+
+                # Перед созданием ai_task_data добавьте:
+                logger.info(f"🔍 DEBUG: extra_data keys: {list(extra_data.keys()) if extra_data else 'None'}")
+                logger.info(f"🔍 DEBUG: frames in extra_data: {len(extra_data.get('frames_data', [])) if extra_data else 0}")
                 
                 ai_task_data = TaskData(
                     task_id=task_data.task_id,  # ТОТ ЖЕ ID!

@@ -334,6 +334,10 @@ class AudioProcessorService:
     async def create_ai_summary_task(self, task_data, result):
         """Создать задачу для AI суммаризации"""
         try:
+
+            frames_data = task_data.data.get('frames_data', [])
+            processing_type = task_data.data.get('processing_type', 'text_only')
+        
             ai_task_data = TaskData(
                 task_id=task_data.task_id,  # ТОТ ЖЕ task_id!
                 task_type=TaskType.SUMMARY_GENERATION,
@@ -347,7 +351,9 @@ class AudioProcessorService:
                     'language': result['language'],
                     'title': result['title'],
                     'file_format': task_data.data.get('file_format', 'both'),
-                    'user_language': task_data.data.get('user_language', 'en')
+                    'user_language': task_data.data.get('user_language', 'en'),
+                    'processing_type': processing_type,  #fix for pipeline 
+                    'frames_data': frames_data 
                 }
             )
             
@@ -356,6 +362,7 @@ class AudioProcessorService:
             
             if success:
                 logger.info(f"✅ Created AI task for {task_data.task_id}")
+                logger.info(f"🔍 Passed {len(frames_data)} frames to AI Processor") 
             else:
                 logger.error(f"❌ Failed to create AI task for {task_data.task_id}")
                 
