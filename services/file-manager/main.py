@@ -439,7 +439,7 @@ class MarkdownGenerator:
 
                     content_lines.append(f"**Context:** {segment}\n")
                     content_lines.append("---\n")
-                
+                """
                 # 🔍 ФИНАЛЬНЫЙ DEBUG: Проверяем что получилось
                 if os.path.exists(images_dir):
                     image_files = [f for f in os.listdir(images_dir) if f.endswith(('.jpg', '.jpeg', '.png'))]
@@ -450,7 +450,7 @@ class MarkdownGenerator:
                         logger.info(f"   - {img_file} ({img_size} bytes)")
                 else:
                     logger.error(f"❌ FINAL DEBUG: Images directory does not exist: {images_dir}")
-            
+                """
             # Original transcript (if available)
             if summaries.get('transcript'):
                 content_lines.append("## 📄 Original Transcript\n")
