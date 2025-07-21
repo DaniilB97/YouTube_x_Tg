@@ -402,11 +402,6 @@ class MarkdownGenerator:
                             file_size = os.path.getsize(frame.get('path'))
                             logger.info(f"   - File size: {file_size} bytes")
 
-                md_dir = os.path.dirname(file_path)
-                images_dir = os.path.join(md_dir, "images")
-                os.makedirs(images_dir, exist_ok=True)
-                logger.info(f"🔍 DEBUG: Created images directory: {images_dir}")
-                
                 for i, frame in enumerate(frames_data, 1):
                     timestamp = frame.get('formatted_timestamp', '00:00')
                     segment = frame.get('transcript_segment', 'No transcript available')
@@ -414,42 +409,32 @@ class MarkdownGenerator:
                     
                     content_lines.append(f"### Frame {i} - {timestamp}\n")
                     
-                    # 🔍 DEBUG: Обработка каждого кадра
-                    logger.info(f"🔍 PROCESSING Frame {i}:")
-                    logger.info(f"   - Frame path: {frame_path}")
-                    
-                    # 🔥 КОПИРУЕМ ИЗОБРАЖЕНИЕ
+                    # 🔥 EMBED IMAGE USING BASE64
                     if frame_path and os.path.exists(frame_path):
                         try:
-                            filename = os.path.basename(frame_path)
-                            new_image_path = os.path.join(images_dir, filename)
+                            # Read image data in binary format
+                            with open(frame_path, "rb") as image_file:
+                                image_data = image_file.read()
                             
-                            logger.info(f"   - Copying: {frame_path} -> {new_image_path}")
+                            # Encode to Base64 string
+                            base64_string = base64.b64encode(image_data).decode('utf-8')
                             
-                            # Копируем файл
-                            shutil.copy2(frame_path, new_image_path)
+                            # Create the Data URI for embedding
+                            image_uri = f"data:image/jpeg;base64,{base64_string}"
                             
-                            # Проверяем что файл скопировался
-                            if os.path.exists(new_image_path):
-                                copied_size = os.path.getsize(new_image_path)
-                                logger.info(f"   - ✅ Copy successful! Size: {copied_size} bytes")
-                                
-                                relative_path = f"images/{filename}"
-                                content_lines.append(f"![Frame {i}]({relative_path})\n")
-                                logger.info(f"   - ✅ Added to markdown: {relative_path}")
-                            else:
-                                logger.error(f"   - ❌ Copy failed - file does not exist after copy")
-                                content_lines.append(f"*[Image copy failed - file not created]*\n")
-                                
+                            # Add to markdown
+                            content_lines.append(f"![Frame {i}]({image_uri})\n")
+                            logger.info(f"   - ✅ Embedded image for frame {i} successfully.")
+
                         except Exception as e:
-                            logger.error(f"   - ❌ Could not copy image: {e}")
-                            content_lines.append(f"*[Image copy error: {str(e)}]*\n")
+                            logger.error(f"   - ❌ Could not embed image {frame_path}: {e}")
+                            content_lines.append(f"*[Image embedding error: {str(e)}]*\n")
                     else:
                         if not frame_path:
-                            logger.warning(f"   - ⚠️ No frame path provided")
+                            logger.warning(f"   - ⚠️ No frame path provided for frame {i}")
                             content_lines.append(f"*[No image path provided]*\n")
                         else:
-                            logger.warning(f"   - ⚠️ Frame path does not exist: {frame_path}")
+                            logger.warning(f"   - ⚠️ Frame path does not exist for frame {i}: {frame_path}")
                             content_lines.append(f"*[Image not found: {frame_path}]*\n")
 
                     content_lines.append(f"**Context:** {segment}\n")
