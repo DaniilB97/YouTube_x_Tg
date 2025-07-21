@@ -1,0 +1,38 @@
+redis==5.0.1
+supabase==1.2.0
+aiohttp==3.9.1
+google-generativeai==0.3.2
+torch==2.1.0
+torchvision==0.16.0
+torchaudio==2.1.0
+openai-whisper==20231117
+pydub==0.25.1
+numpy<2.0
+requests==2.31.0
+a# services/ai-overdub-processor/requirements.txt
+
+# 🔥 AI Over Dub Dependencies
+
+# Shared dependencies
+redis==5.0.0
+aiohttp==3.9.0
+asyncio-mqtt==0.11.1
+
+# 🧠 AI Translation - Рабочий №2: Переводчик
+google-generativeai==0.3.2
+deep-translator==1.11.4
+
+# 🗣️ TTS Generation - Рабочий №3: Диктор  
+edge-tts==6.1.9
+pydub==0.25.1
+
+# 🎬 Video Processing - Рабочий №4: Монтажёр
+moviepy==1.0.3
+
+# Audio processing
+numpy==1.24.3
+scipy==1.11.3
+
+# Utilities
+python-dotenv==1.0.0
+pathlib==1.0.1

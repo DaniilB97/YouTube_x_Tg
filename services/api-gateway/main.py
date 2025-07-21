@@ -45,7 +45,8 @@ QUEUES = {
     'video_processing': 'video_processing_queue',
     'ai_processing': 'ai_processing_queue',
     'audio_processing': 'audio_processing_queue',
-    'file_management': 'file_management_queue'
+    'file_management': 'file_management_queue',
+    'ai_overdub_processing': 'ai_overdub_processing_queue'
 }
 
 # Pydantic models for API requests
@@ -55,6 +56,7 @@ class VideoProcessingRequest(BaseModel):
     youtube_url: str
     processing_type: str = "text_only"  # text_only, frames_only, full_analysis
     file_format: str = "both"  # pdf, markdown, both
+    target_language: Optional[str] = None
     message_id: Optional[int] = None
 
 class AudioProcessingRequest(BaseModel):
@@ -174,6 +176,12 @@ async def process_video(request: VideoProcessingRequest):
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         
+        if request.processing_type == 'ai_overdub':
+            if not request.target_language:
+                raise HTTPException(status_code=400, detail="Target language is required for AI Over Dub")
+            if request.target_language not in ['ru', 'en', 'es', 'fr']:
+                raise HTTPException(status_code=400, detail="Unsupported target language")
+        
         # Generate task ID
         task_id = generate_task_id()
         
@@ -192,6 +200,7 @@ async def process_video(request: VideoProcessingRequest):
                 "youtube_url": request.youtube_url, # Сохраняем и URL для истории
                 "processing_type": request.processing_type,
                 "file_format": request.file_format,
+                "target_language": request.target_language, 
                 "user_language": user.language,
                 "title": f"YouTube Video {video_id}" # Можно передать базовый заголовок
             }
@@ -204,15 +213,130 @@ async def process_video(request: VideoProcessingRequest):
         
         # Set initial status
         await redis.set_task_status(task_id, TaskStatus.PENDING)
+
+        if request.processing_type == 'ai_overdub':
+            message = f"AI Over Dub task queued successfully for {request.target_language}"
+        else:
+            message = "Video processing task queued successfully"
         
         return {
             "task_id": task_id,
             "status": "queued",
-            "message": "Video processing task queued successfully"
+            "processing_type": request.processing_type,
+            "target_language": request.target_language,
+            "message": message
         }
         
     except Exception as e:
         logger.error(f"Error processing video: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/v1/video/ai-overdub")
+async def process_ai_overdub(request: VideoProcessingRequest):
+    """🔥 НОВОЕ: Process YouTube video with AI Over Dub"""
+    try:
+        # Валидация для AI Over Dub
+        if not request.target_language:
+            raise HTTPException(status_code=400, detail="Target language is required for AI Over Dub")
+        
+        if request.target_language not in ['ru', 'en', 'es', 'fr']:
+            raise HTTPException(status_code=400, detail="Unsupported target language for AI Over Dub")
+
+        # Извлекаем ID видео
+        video_id = extract_video_id_from_url(request.youtube_url)
+        
+        if not video_id:
+            raise HTTPException(status_code=400, detail="Invalid YouTube URL or could not extract video ID")
+
+        # Get user info
+        user = await db.get_user(request.user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Generate task ID
+        task_id = generate_task_id()
+        
+        # 🔥 НОВОЕ: Создаем AI Over Dub задачу
+        task_data = TaskData(
+            task_id=task_id,
+            task_type=TaskType.YOUTUBE_PROCESSING,
+            user_id=request.user_id,
+            chat_id=request.chat_id,
+            status=TaskStatus.PENDING,
+            priority=get_priority_from_subscription(user.subscription_tier.value) + 1,  # Высокий приоритет
+            message_id=request.message_id,
+            data={
+                "video_id": video_id, 
+                "youtube_url": request.youtube_url,
+                "processing_type": "ai_overdub",  # 🔥 СПЕЦИАЛЬНЫЙ ТИП
+                "target_language": request.target_language,
+                "file_format": "video",  # Для AI Over Dub всегда видео
+                "user_language": user.language,
+                "title": f"AI Over Dub {video_id} → {request.target_language}"
+            }
+        )
+        
+        # Add to queue
+        success = await redis.enqueue_task('video_processing_queue', task_data)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to enqueue AI Over Dub task")
+        
+        # Set initial status
+        await redis.set_task_status(task_id, TaskStatus.PENDING)
+        
+        return {
+            "task_id": task_id,
+            "status": "queued",
+            "processing_type": "ai_overdub",
+            "target_language": request.target_language,
+            "message": f"AI Over Dub task queued successfully for {request.target_language}"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error processing AI Over Dub: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/task/{task_id}/ai-overdub-status")
+async def get_ai_overdub_status(task_id: str):
+    """🔥 НОВОЕ: Get detailed AI Over Dub task status with progress"""
+    try:
+        status = await redis.get_task_status(task_id)
+        
+        if not status:
+            raise HTTPException(status_code=404, detail="AI Over Dub task not found")
+        
+        # Базовый ответ
+        response = {
+            "task_id": task_id,
+            "status": status.get('status', 'unknown'),
+            "result": status.get('result'),
+            "error": status.get('error'),
+            "created_at": status.get('created_at', ''),
+            "updated_at": status.get('updated_at')
+        }
+        
+        # Дополнительная информация для AI Over Dub
+        if status.get('result'):
+            result = status['result']
+            if isinstance(result, str):
+                import json
+                result = json.loads(result)
+            
+            # Прогресс AI Over Dub
+            if 'overdub_progress' in result:
+                response['overdub_progress'] = result['overdub_progress']
+            
+            # Информация о стадии
+            if 'stage' in result:
+                response['current_stage'] = result['stage']
+                response['stage_progress'] = result.get('progress', 0)
+        
+        return response
+        
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error getting AI Over Dub task status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/v1/audio/process")

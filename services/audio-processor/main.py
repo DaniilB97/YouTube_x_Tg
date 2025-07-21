@@ -1,13 +1,11 @@
-# Этот файл создает Audio Processor Service для обработки аудио с Whisper, TTS, voice cloning
-
-# services/audio-processor/main.py
+# services/audio-processor/main.py - ОБНОВЛЕННАЯ ВЕРСИЯ для AI Over Dub
 import os
 import asyncio
 import logging
 import tempfile
 import shutil
 from datetime import datetime
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, List
 import subprocess
 import json
 
@@ -28,7 +26,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class WhisperProcessor:
-    """Process audio files with Whisper for transcription"""
+    """Process audio files with Whisper for transcription WITH SEGMENTS for AI Over Dub"""
     
     def __init__(self):
         self.whisper_models = {
@@ -61,8 +59,8 @@ class WhisperProcessor:
             logger.error(f"❌ Error loading Whisper model {model_name}: {e}")
             return False
     
-    async def transcribe_audio_safe(self, audio_path: str) -> Tuple[str, str, int]:
-        """Transcribe audio file using subprocess for isolation"""
+    async def transcribe_audio_safe(self, audio_path: str) -> Tuple[str, str, int, List[Dict]]:
+        """🔥 ОБНОВЛЕНО: Transcribe audio file using subprocess for isolation WITH SEGMENTS"""
         try:
             logger.info(f"🎵 Starting Whisper transcription: {audio_path}")
             
@@ -75,7 +73,7 @@ class WhisperProcessor:
                 logger.warning(f"Could not get audio duration: {e}")
                 duration = 0
             
-            # Create isolated Whisper script
+            # 🔥 НОВОЕ: Create isolated Whisper script WITH SEGMENTS
             whisper_script = f'''
 import whisper
 import json
@@ -90,6 +88,7 @@ try:
     output = {{
         "text": result["text"],
         "language": result["language"],
+        "segments": result["segments"],  # 🔥 КЛЮЧЕВОЕ ИЗМЕНЕНИЕ!
         "success": True
     }}
     
@@ -99,6 +98,7 @@ except Exception as e:
     output = {{
         "text": "",
         "language": "en",
+        "segments": [],  # 🔥 ДОБАВЛЕНО
         "success": False,
         "error": str(e)
     }}
@@ -123,7 +123,7 @@ except Exception as e:
             except asyncio.TimeoutError:
                 process.kill()
                 logger.error("⏰ Whisper transcription timed out")
-                return "Transcription timed out", "en", duration
+                return "Transcription timed out", "en", duration, []
             
             if process.returncode == 0:
                 # Parse result
@@ -133,38 +133,40 @@ except Exception as e:
                     if result_data.get('success'):
                         text = result_data.get('text', '').strip()
                         language = result_data.get('language', 'en')
+                        segments = result_data.get('segments', [])  # 🔥 ИЗВЛЕКАЕМ СЕГМЕНТЫ
                         
                         if len(text) > 10:  # Valid transcription
                             logger.info(f"✅ Whisper transcription successful: {len(text)} characters")
-                            return text, language, duration
+                            logger.info(f"🎬 Extracted {len(segments)} segments for AI Over Dub")  # 🔥 НОВОЕ
+                            return text, language, duration, segments  # 🔥 ВОЗВРАЩАЕМ 4 ЗНАЧЕНИЯ
                         else:
                             logger.warning("⚠️ Whisper returned very short text")
-                            return "Audio transcription produced minimal text", language, duration
+                            return "Audio transcription produced minimal text", language, duration, []
                     else:
                         error = result_data.get('error', 'Unknown error')
                         logger.error(f"❌ Whisper transcription failed: {error}")
-                        return f"Transcription failed: {error}", "en", duration
+                        return f"Transcription failed: {error}", "en", duration, []
                         
                 except json.JSONDecodeError as e:
                     logger.error(f"❌ Could not parse Whisper output: {e}")
                     logger.error(f"Raw output: {stdout.decode()}")
-                    return "Transcription output parsing failed", "en", duration
+                    return "Transcription output parsing failed", "en", duration, []
             else:
                 error_output = stderr.decode()
                 logger.error(f"❌ Whisper subprocess failed with code {process.returncode}")
                 logger.error(f"Error output: {error_output}")
-                return f"Transcription subprocess failed", "en", duration
+                return f"Transcription subprocess failed", "en", duration, []
             
         except Exception as e:
             logger.error(f"❌ Error in Whisper transcription: {e}")
-            return f"Transcription error: {str(e)}", "en", 0
+            return f"Transcription error: {str(e)}", "en", 0, []
     
-    async def transcribe_audio_simple(self, audio_path: str) -> Tuple[str, str, int]:
-        """Simple transcription for testing without subprocess"""
+    async def transcribe_audio_simple(self, audio_path: str) -> Tuple[str, str, int, List[Dict]]:
+        """🔥 ОБНОВЛЕНО: Simple transcription for testing without subprocess WITH SEGMENTS"""
         try:
             if not self.current_model:
                 if not self.load_whisper_model('tiny'):
-                    return "Failed to load Whisper model", "en", 0
+                    return "Failed to load Whisper model", "en", 0, []
             
             logger.info(f"🎵 Transcribing with Whisper model: {self.current_model_name}")
             
@@ -180,47 +182,25 @@ except Exception as e:
             
             text = result["text"].strip()
             language = result["language"]
+            segments = result.get("segments", [])  # 🔥 ИЗВЛЕКАЕМ СЕГМЕНТЫ
             
             if len(text) > 5:
                 logger.info(f"✅ Transcription successful: {len(text)} characters")
-                return text, language, duration
+                logger.info(f"🎬 Extracted {len(segments)} segments for AI Over Dub")  # 🔥 НОВОЕ
+                return text, language, duration, segments  # 🔥 ВОЗВРАЩАЕМ 4 ЗНАЧЕНИЯ
             else:
-                return "Audio transcription produced minimal content", language, duration
+                return "Audio transcription produced minimal content", language, duration, []
             
         except Exception as e:
             logger.error(f"❌ Transcription error: {e}")
-            return f"Transcription failed: {str(e)}", "en", 0
-
-class TTSProcessor:
-    """Text-to-Speech processing (placeholder for future implementation)"""
-    
-    def __init__(self):
-        logger.info("🔊 TTS Processor initialized (placeholder)")
-    
-    async def generate_speech(self, text: str, voice: str = "default") -> Optional[str]:
-        """Generate speech from text (placeholder)"""
-        logger.info("🔊 TTS generation requested (not implemented yet)")
-        return None
-
-class VoiceCloningProcessor:
-    """Voice cloning functionality (placeholder for future implementation)"""
-    
-    def __init__(self):
-        logger.info("🎭 Voice Cloning Processor initialized (placeholder)")
-    
-    async def clone_voice(self, source_audio: str, target_text: str) -> Optional[str]:
-        """Clone voice for text (placeholder)"""
-        logger.info("🎭 Voice cloning requested (not implemented yet)")
-        return None
+            return f"Transcription failed: {str(e)}", "en", 0, []
 
 class AudioProcessorService:
-    """Main Audio Processing Service"""
+    """Main Audio Processing Service WITH AI Over Dub support"""
     
     def __init__(self):
         self.redis = get_redis()
         self.whisper_processor = WhisperProcessor()
-        self.tts_processor = TTSProcessor()
-        self.voice_cloning_processor = VoiceCloningProcessor()
         self.queue_name = 'audio_processing_queue'
         
         # Audio processing settings
@@ -231,23 +211,20 @@ class AudioProcessorService:
         """Start the Audio Processing service"""
         await self.redis.connect()
         logger.info("✅ Audio Processor Service started")
-        # Получаем имя модели
-
+        
         if not self.use_subprocess:
             model_name = os.getenv('WHISPER_MODEL_NAME', 'tiny')
             logger.info(f"📥 Pre-loading Whisper model: {model_name}...")
             self.whisper_processor.load_whisper_model(model_name)
         
-        logger.info("🎵 Audio Processor Service ready for tasks")
+        logger.info("🎵 Audio Processor Service ready for AI Over Dub tasks")
         
         # Start processing loop
         while True:
             try:
                 await self.process_tasks()
-            # 🕵️‍♂️ Ловим абсолютно все исключения, чтобы увидеть скрытые проблемы
             except BaseException as e:
                 logger.error(f"❌ CRITICAL ERROR in processing loop: {type(e).__name__}: {e}", exc_info=True)
-                logger.exception("Full traceback:") # Выводим полный стектрейс для диагностики
                 await asyncio.sleep(5)
     
     async def process_tasks(self):
@@ -263,7 +240,7 @@ class AudioProcessorService:
             logger.error(f"Error processing tasks: {e}")
     
     async def process_audio_task(self, task_data: TaskData):
-        """Process a single audio task"""
+        """Process a single audio task WITH AI Over Dub support"""
         try:
             await self.redis.set_task_status(task_data.task_id, TaskStatus.PROCESSING)
             
@@ -272,22 +249,10 @@ class AudioProcessorService:
             title = task_data.data.get('title', 'Audio File')
             
             if audio_type in ['voice_message', 'audio_file', 'youtube_audio']:
-                # Transcription task
+                # Transcription task WITH SEGMENTS for AI Over Dub
                 result = await self.process_transcription(task_data, file_path, title)
-            elif audio_type == 'tts':
-                # Text-to-Speech task
-                result = await self.process_tts(task_data)
-            elif audio_type == 'voice_clone':
-                # Voice cloning task
-                result = await self.process_voice_cloning(task_data)
             else:
                 raise Exception(f"Unknown audio type: {audio_type}")
-            
-            #await self.redis.set_task_status(
-             #   task_data.task_id,
-                #TaskStatus.COMPLETED,
-             #   result=result
-            #)
             
             logger.info(f"✅ Completed audio task {task_data.task_id}")
             
@@ -300,7 +265,7 @@ class AudioProcessorService:
             )
     
     async def process_transcription(self, task_data: TaskData, file_path: str, title: str) -> Dict:
-        """Process audio transcription"""
+        """🔥 ОБНОВЛЕНО: Process audio transcription WITH SEGMENTS for AI Over Dub"""
         if not file_path or not os.path.exists(file_path):
             raise Exception(f"Audio file not found: {file_path}")
         
@@ -308,12 +273,25 @@ class AudioProcessorService:
         
         # Choose transcription method
         if self.use_subprocess:
-            transcript, language, duration = await self.whisper_processor.transcribe_audio_safe(file_path)
+            transcript, language, duration, segments = await self.whisper_processor.transcribe_audio_safe(file_path)
         else:
-            transcript, language, duration = await self.whisper_processor.transcribe_audio_simple(file_path)
+            transcript, language, duration, segments = await self.whisper_processor.transcribe_audio_simple(file_path)
         
         if not transcript or len(transcript.strip()) < 5:
             raise Exception("Transcription failed or produced no content")
+        
+        # 🔥 НОВОЕ: Формируем frames_data из сегментов для AI Over Dub
+        frames_data = []
+        if segments:
+            for seg in segments:
+                frames_data.append({
+                    "start": seg.get("start"),
+                    "end": seg.get("end"),
+                    "text": seg.get("text", "").strip()
+                })
+            logger.info(f"✅ Created {len(frames_data)} frames from transcription segments for AI Over Dub.")
+        else:
+            logger.warning("⚠️ No segments found, frames_data will be empty.")
         
         result = {
             'transcript': transcript,
@@ -322,34 +300,36 @@ class AudioProcessorService:
             'file_path': file_path,
             'title': title,
             'audio_type': task_data.data.get('audio_type'),
-            'processing_method': 'subprocess' if self.use_subprocess else 'direct'
+            'processing_method': 'subprocess' if self.use_subprocess else 'direct',
+            'frames_data': frames_data  # 🔥 КЛЮЧЕВОЕ ДОБАВЛЕНИЕ для AI Over Dub
         }
         
-        # Check if we need to create AI summary task
-       # if task_data.data.get('create_summary', True):
-        await self.create_ai_summary_task(task_data, result)
-        
+        await self.create_next_task(task_data, result)
         return result
     
-    async def create_ai_summary_task(self, task_data, result):
-        """Создать задачу для AI суммаризации или озвучки"""
+    async def create_next_task(self, task_data, result):
+        """🔥 ОБНОВЛЕНО: Создать задачу для AI суммаризации или AI Over Dub"""
         try:
-            # В начале метода добавьте:
-            
-            # 🔥 ДОБАВИТЬ ИЗВЛЕЧЕНИЕ ДАННЫХ ДЛЯ ОЗВУЧКИ:
-            frames_data = task_data.data.get('frames_data', [])
+            # 🔥 ИЗВЛЕЧЕНИЕ ДАННЫХ ДЛЯ AI OVER DUB:
+            frames_data = result.get('frames_data', [])
             processing_type = task_data.data.get('processing_type', 'text_only')
             target_language = task_data.data.get('target_language')
+            existing_transcript = task_data.data.get('existing_transcript')  # 🔥 НОВОЕ для AI Over Dub
+
 
             logger.info(f"🔍 DEBUG: processing_type = {processing_type}")
             logger.info(f"🔍 DEBUG: target_language = {target_language}")
-            logger.info(f"🔍 DEBUG: task_data.data keys = {list(task_data.data.keys())}")
+            logger.info(f"🔍 DEBUG: frames_data count = {len(frames_data)}")
+            logger.info(f"🔍 DEBUG: existing transcript = {existing_transcript}")
             
-            # 🔥 НОВОЕ: Если это озвучка, отправляем в Voice Processor
-            if processing_type == 'voice_overdub' and target_language:
-                voice_task_data = TaskData(
+            # 🔥 НОВОЕ: Если это AI Over Dub, отправляем в AI Over Dub Processor
+            if processing_type == 'ai_overdub' and target_language:
+
+                final_transcript = existing_transcript or result ['transcript']
+
+                ai_overdub_task_data = TaskData(
                     task_id=task_data.task_id,
-                    task_type=TaskType.VOICE_PROCESSING,
+                    task_type=TaskType.DUB_PROCESSING,  # 🔥 НОВЫЙ ТИП ЗАДАЧИ
                     user_id=task_data.user_id,
                     chat_id=task_data.chat_id,
                     status=TaskStatus.PENDING,
@@ -361,21 +341,23 @@ class AudioProcessorService:
                         'title': result['title'],
                         'target_language': target_language,
                         'video_path': task_data.data.get('video_path'),  # Путь к видео
-                        'processing_type': processing_type
+                        'processing_type': processing_type,
+                        'frames_data': frames_data  # 🔥 СЕГМЕНТЫ ДЛЯ СИНХРОНИЗАЦИИ
                     }
                 )
                 
-                success = await self.redis.enqueue_task('voice_processing_queue', voice_task_data)
+                success = await self.redis.enqueue_task('ai_overdub_processing_queue', ai_overdub_task_data)
                 
                 if success:
-                    logger.info(f"✅ Created voice processing task for {task_data.task_id}")
+                    logger.info(f"✅ Created AI Over Dub processing task for {task_data.task_id}")
                     logger.info(f"🎙️ Target language: {target_language}")
+                    logger.info(f"🎬 Frames for sync: {len(frames_data)}")
                 else:
-                    logger.error(f"❌ Failed to create voice processing task for {task_data.task_id}")
+                    logger.error(f"❌ Failed to create AI Over Dub processing task for {task_data.task_id}")
             else:
                 # 🔥 ОБЫЧНАЯ ОБРАБОТКА: AI суммаризация
                 ai_task_data = TaskData(
-                    task_id=task_data.task_id,  # ТОТ ЖЕ task_id!
+                    task_id=task_data.task_id,
                     task_type=TaskType.SUMMARY_GENERATION,
                     user_id=task_data.user_id,
                     chat_id=task_data.chat_id,
@@ -393,7 +375,6 @@ class AudioProcessorService:
                     }
                 )
                 
-                # Отправляем в AI очередь
                 success = await self.redis.enqueue_task('ai_processing_queue', ai_task_data)
                 
                 if success:
@@ -404,41 +385,7 @@ class AudioProcessorService:
                     
         except Exception as e:
             logger.error(f"❌ Error creating next task: {e}")
-    
-    async def process_tts(self, task_data: TaskData) -> Dict:
-        """Process Text-to-Speech (placeholder)"""
-        text = task_data.data.get('text', '')
-        voice = task_data.data.get('voice', 'default')
-        
-        logger.info(f"🔊 TTS requested for {len(text)} characters")
-        
-        # Placeholder implementation
-        audio_file = await self.tts_processor.generate_speech(text, voice)
-        
-        return {
-            'audio_file': audio_file,
-            'text': text,
-            'voice': voice,
-            'status': 'TTS not implemented yet'
-        }
-    
-    async def process_voice_cloning(self, task_data: TaskData) -> Dict:
-        """Process voice cloning (placeholder)"""
-        source_audio = task_data.data.get('source_audio')
-        target_text = task_data.data.get('target_text')
-        
-        logger.info(f"🎭 Voice cloning requested")
-        
-        # Placeholder implementation
-        cloned_audio = await self.voice_cloning_processor.clone_voice(source_audio, target_text)
-        
-        return {
-            'cloned_audio': cloned_audio,
-            'source_audio': source_audio,
-            'target_text': target_text,
-            'status': 'Voice cloning not implemented yet'
-        }
-    
+
 async def main():
     """Main entry point"""
     service = AudioProcessorService()

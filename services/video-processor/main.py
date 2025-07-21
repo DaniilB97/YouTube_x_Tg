@@ -370,19 +370,25 @@ class VideoProcessorService:
             logger.error(f"Error processing tasks: {e}")
     
     async def process_video_task(self, task_data: TaskData):
-        """Обрабатывает одну задачу"""
+        """🔥 ОБНОВЛЕНО: Обрабатывает одну задачу с поддержкой AI Over Dub"""
         video_id = task_data.data.get('video_id')
-        processing_type = task_data.data.get('processing_type', 'text_only')  # 🔥 ДОБАВИТЬ
+        processing_type = task_data.data.get('processing_type', 'text_only')
         target_language = task_data.data.get('target_language') 
         
         try:
             await self.redis.set_task_status(task_data.task_id, TaskStatus.PROCESSING)
 
-            # 🔥 НОВОЕ: Полный анализ с кадрами
+            # 🔥 НОВОЕ: Обработка AI Over Dub
             extra_data = {}
 
-            if processing_type == 'voice_overdub':
-                # Озвучка видео
+            if processing_type == 'ai_overdub':  # 🔥 НОВЫЙ ТИП
+                # AI Over Dub - нужно и видео и подробная транскрипция с сегментами
+                logger.info(f"🎭 AI Over Dub requested for {video_id} → {target_language}")
+                video_path = await self.download_video_for_overdub(video_id)
+                extra_data = {'video_path': video_path, 'target_language': target_language}
+
+            elif processing_type == 'voice_overdub':
+                # Обычная озвучка (legacy)
                 logger.info(f"🎙️ Voice overdub requested for {video_id} → {target_language}")
                 video_path = await self.download_video_for_overdub(video_id)
                 extra_data = {'video_path': video_path, 'target_language': target_language}
@@ -404,18 +410,53 @@ class VideoProcessorService:
             transcript, lang = self._get_transcript_via_api(video_id)
 
             if transcript:
-                # УСПЕХ: Создаем AI задачу
-                logger.info(f"✅ Transcript found for {video_id}. Enqueuing for AI processing.")
+                # УСПЕХ: Создаем следующую задачу
+                logger.info(f"✅ Transcript found for {video_id}. Enqueuing for next processing.")
 
-                # Перед созданием ai_task_data добавьте:
                 logger.info(f"🔍 DEBUG: extra_data keys: {list(extra_data.keys()) if extra_data else 'None'}")
-                logger.info(f"🔍 DEBUG: frames in extra_data: {len(extra_data.get('frames_data', [])) if extra_data else 0}")
                 
-                if processing_type == 'voice_overdub':
-                    # 🔥 НОВОЕ: Создаем задачу для Voice Processor
+                if processing_type == 'ai_overdub':
+                    # 🔥 НОВОЕ: Создаем задачу для AI Over Dub Processor
+                    # Важно: нам нужны сегменты, но из API мы получили только текст
+                    # Поэтому отправляем в Audio Processor для получения сегментов
+                    audio_path = self._download_audio(video_id)
+                    
+                    if audio_path:
+                        logger.info(f"✅ Audio downloaded for AI Over Dub segmentation: {video_id}")
+                        
+                        audio_task_data = TaskData(
+                            task_id=task_data.task_id,
+                            task_type=TaskType.AUDIO_PROCESSING,
+                            user_id=task_data.user_id,
+                            chat_id=task_data.chat_id,
+                            status=TaskStatus.PENDING,
+                            priority=task_data.priority,
+                            message_id=task_data.message_id,
+                            data={
+                                'file_path': audio_path,
+                                'title': task_data.data.get('title', f'YouTube Video {video_id}'),
+                                'audio_type': 'youtube_audio',
+                                'processing_type': 'ai_overdub',  # 🔥 ПЕРЕДАЕМ ТИП
+                                'target_language': target_language,
+                                'existing_transcript': transcript,  # 🔥 ПЕРЕДАЕМ ГОТОВЫЙ ТРАНСКРИПТ
+                                'user_language': task_data.data.get('user_language', 'en'),
+                                **extra_data
+                            }
+                        )
+                        
+                        success = await self.redis.enqueue_task('audio_processing_queue', audio_task_data)
+                        if success:
+                            logger.info(f"✅ Created audio segmentation task for AI Over Dub {task_data.task_id}")
+                        else:
+                            raise Exception("Failed to create audio segmentation task for AI Over Dub")
+                    else:
+                        raise Exception("Failed to download audio for AI Over Dub segmentation")
+                
+                elif processing_type == 'voice_overdub':
+                    # 🔥 СУЩЕСТВУЮЩЕЕ: Voice Processor для обычной озвучки
                     voice_task_data = TaskData(
                         task_id=task_data.task_id,
-                        task_type=TaskType.VOICE_PROCESSING,  # 🔥 НОВЫЙ ТИП
+                        task_type=TaskType.VOICE_PROCESSING,
                         user_id=task_data.user_id,
                         chat_id=task_data.chat_id,
                         status=TaskStatus.PENDING,
@@ -485,7 +526,7 @@ class VideoProcessorService:
                             'file_format': task_data.data.get('file_format', 'both'),
                             'user_language': task_data.data.get('user_language', 'en'),
                             'processing_type': processing_type,
-                            'target_language': target_language,  # 🔥 ДОБАВИТЬ
+                            'target_language': target_language,
                             **extra_data
                         }
                     )
@@ -505,6 +546,39 @@ class VideoProcessorService:
                 TaskStatus.FAILED,
                 error=f"Video processing failed: {e}"
             )
+
+    # 🔥 НОВОЕ: Добавить новый метод для более качественного скачивания видео для AI Over Dub
+    async def download_video_for_ai_overdub(self, video_id: str) -> Optional[str]:
+        """Download video in optimal quality for AI Over Dub processing"""
+        try:
+            url = f"https://www.youtube.com/watch?v={video_id}"
+            
+            # Для AI Over Dub скачиваем в лучшем качестве но разумном размере
+            ydl_opts = {
+                'format': 'best[height<=1080]/best[height<=720]/best',  # До 1080p, fallback к 720p
+                'outtmpl': f'{self.output_dir}/ai_overdub_video_{video_id}.%(ext)s',
+                'quiet': True,
+                'no_warnings': True,
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                },
+            }
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+            
+            # Найти скачанный файл
+            for file in os.listdir(self.output_dir):
+                if file.startswith(f'ai_overdub_video_{video_id}'):
+                    video_path = os.path.join(self.output_dir, file)
+                    logger.info(f"✅ Downloaded AI Over Dub video: {video_path}")
+                    return video_path
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error downloading video for AI Over Dub: {e}")
+            return None
 
     def copy_frames_to_shared_storage(self, frames_data: List[Dict], task_id: str) -> List[Dict]:
         """Copy frames from temp directory to shared storage"""

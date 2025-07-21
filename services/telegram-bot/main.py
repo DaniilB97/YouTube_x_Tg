@@ -876,16 +876,16 @@ class TelegramBotService:
         
         # Определяем название языка
         language_names = {
-            'ru': 'Русский',
-            'en': 'English', 
-            'es': 'Español',
-            'fr': 'Français'
+            'ru': 'Русский 🇷🇺',
+            'en': 'English 🇺🇸', 
+            'es': 'Español 🇪🇸',
+            'fr': 'Français 🇫🇷'
         }
         
         language_name = language_names.get(target_language, target_language)
         
         # Обновляем сообщение
-        await event.edit(f"""⏳ **Начинаю перевод и озвучку...**
+        await event.edit(f"""🎭 **Запускаю AI Over Dub...**
 
     🎬 **{user_state['title']}**
     👤 *{user_state['author']}*
@@ -893,17 +893,23 @@ class TelegramBotService:
 
     🎙️ Целевой язык: {language_name}
 
-    📊 **Прогресс:**
-    {self.get_progress_bar(0)} 0% - Подготовка...
+    🤖 **AI Over Dub Pipeline:**
+    📊 {self.get_overdub_progress_bar(0)} 0% - Подготовка...
 
-    ⏱️ Оценочное время: 3-5 минут""")
+    🔄 **Этапы обработки:**
+    🤖 1. Распознавание речи (Whisper AI)
+    🧠 2. Умный перевод (Gemini AI) 
+    🗣️ 3. Синтез речи (Edge TTS)
+    🎬 4. Синхронизация видео (FFmpeg)
+
+    ⏱️ Оценочное время: 5-8 минут""")
         
         # Отправляем запрос на обработку
         task_id = await self.send_video_processing_request(
             user=user_state['user'],
             youtube_url=user_state['url'],
             chat_id=user_state['chat_id'],
-            processing_type="voice_overdub",
+            processing_type="ai_overdub",
             file_format="video",  # Новый формат для видео
             target_language=target_language  # 🔥 НОВЫЙ ПАРАМЕТР
         )
@@ -914,7 +920,7 @@ class TelegramBotService:
                 'user_id': user_state['user'].user_id,
                 'chat_id': user_state['chat_id'],
                 'message_id': user_state['message_id'],
-                'type': 'voice_overdub',
+                'type': 'ai_overdub',
                 'processing_type': 'voice_overdub',
                 'target_language': target_language,
                 'original_title': user_state['title']
@@ -926,6 +932,139 @@ class TelegramBotService:
             logger.info(f"Voice overdub task created: {task_id} (target: {target_language})")
         else:
             await event.edit("❌ **Ошибка**\n\nНе удалось запустить озвучку. Попробуйте позже.")
+
+    def get_overdub_progress_bar(self, percent: int) -> str:
+        """🔥 НОВОЕ: Generate progress bar for AI Over Dub"""
+        filled = int(percent / 10)
+        return '🎭' * filled + '⚫' * (10 - filled)
+
+    def get_overdub_stage_info(self, data: Dict, result: Dict) -> Dict:
+        """🔥 НОВОЕ: Determine AI Over Dub processing stage"""
+        try:
+            # Проверяем есть ли информация о прогрессе в результате
+            if 'overdub_progress' in result:
+                progress = result['overdub_progress']
+                stage = progress.get('current_stage', 'transcription')
+                total_progress = progress.get('total_progress', 0)
+                action = progress.get('current_action', 'Processing...')
+                
+                stage_info = {
+                    'transcription': {
+                        'emoji': '🤖',
+                        'name': 'Распознавание речи',
+                        'description': 'Whisper AI анализирует аудио...'
+                    },
+                    'translation': {
+                        'emoji': '🧠', 
+                        'name': 'Умный перевод',
+                        'description': 'Gemini AI переводит с контекстом...'
+                    },
+                    'tts_generation': {
+                        'emoji': '🗣️',
+                        'name': 'Синтез речи', 
+                        'description': 'Edge TTS создает озвучку...'
+                    },
+                    'video_sync': {
+                        'emoji': '🎬',
+                        'name': 'Синхронизация',
+                        'description': 'FFmpeg собирает финальное видео...'
+                    },
+                    'finalizing': {
+                        'emoji': '📦',
+                        'name': 'Финализация',
+                        'description': 'Сохранение результата...'
+                    }
+                }
+                
+                current_stage_info = stage_info.get(stage, stage_info['transcription'])
+                
+                return {
+                    'bar': self.get_overdub_progress_bar(total_progress),
+                    'percent': total_progress,
+                    'emoji': current_stage_info['emoji'],
+                    'stage_name': current_stage_info['name'],
+                    'message': current_stage_info['description'],
+                    'action': action,
+                    'time_estimate': self.estimate_overdub_time_remaining(total_progress)
+                }
+            
+            # Fallback если нет детальной информации
+            elif 'stage' in result:
+                stage = result.get('stage', 'translation')
+                progress = result.get('progress', 25)
+                
+                stage_mapping = {
+                    'translation': {
+                        'bar': self.get_overdub_progress_bar(25),
+                        'percent': 25,
+                        'emoji': '🧠',
+                        'stage_name': 'Умный перевод',
+                        'message': 'Gemini AI переводит с контекстом...',
+                        'time_estimate': 'Осталось ~4-6 минут'
+                    },
+                    'tts_generation': {
+                        'bar': self.get_overdub_progress_bar(60),
+                        'percent': 60,
+                        'emoji': '🗣️',
+                        'stage_name': 'Синтез речи',
+                        'message': 'Edge TTS создает озвучку...',
+                        'time_estimate': 'Осталось ~2-3 минуты'
+                    },
+                    'video_sync': {
+                        'bar': self.get_overdub_progress_bar(85),
+                        'percent': 85,
+                        'emoji': '🎬', 
+                        'stage_name': 'Синхронизация',
+                        'message': 'FFmpeg собирает финальное видео...',
+                        'time_estimate': 'Осталось ~30-60 секунд'
+                    }
+                }
+                
+                return stage_mapping.get(stage, {
+                    'bar': self.get_overdub_progress_bar(10),
+                    'percent': 10,
+                    'emoji': '🤖',
+                    'stage_name': 'Обработка',
+                    'message': 'AI Over Dub в процессе...',
+                    'time_estimate': 'Осталось ~5-7 минут'
+                })
+            
+            # Самый базовый fallback
+            else:
+                return {
+                    'bar': self.get_overdub_progress_bar(15),
+                    'percent': 15,
+                    'emoji': '🤖',
+                    'stage_name': 'Распознавание речи',
+                    'message': 'Whisper AI анализирует аудио...',
+                    'time_estimate': 'Осталось ~6-8 минут'
+                }
+                
+        except Exception as e:
+            logger.error(f"Error determining overdub stage: {e}")
+            return {
+                'bar': self.get_overdub_progress_bar(10),
+                'percent': 10,
+                'emoji': '🔄',
+                'stage_name': 'Обработка',
+                'message': 'AI Over Dub в процессе...',
+                'time_estimate': 'Осталось ~5-7 минут'
+            }
+
+    def estimate_overdub_time_remaining(self, progress: int) -> str:
+        """🔥 НОВОЕ: Estimate remaining time for AI Over Dub"""
+        if progress >= 95:
+            return "Осталось ~10-20 секунд"
+        elif progress >= 80:
+            return "Осталось ~30-60 секунд" 
+        elif progress >= 60:
+            return "Осталось ~1-2 минуты"
+        elif progress >= 40:
+            return "Осталось ~2-3 минуты"
+        elif progress >= 20:
+            return "Осталось ~3-5 минут"
+        else:
+            return "Осталось ~5-8 минут"
 
     async def show_processing_type_selection(self, event):
         """Show processing type selection again"""
@@ -1033,13 +1172,73 @@ class TelegramBotService:
             logger.error(f"❌ Error handling task status update: {e}")
     
     async def handle_task_completion(self, task_id: str, task_info: Dict, data: Dict):
-        """Handle completed task"""
+        """🔥 ОБНОВЛЕНО: Handle completed task with AI Over Dub support + сохранение всей оригинальной логики"""
         try:
             user = await self.db.get_user(task_info['user_id'])
             if not user:
                 return
             
-            completion_msg = f"""✅ **Обработка завершена!**
+            # 🔥 НОВОЕ: Специальная обработка для AI Over Dub
+            if task_info.get('type') == 'ai_overdub':
+                completion_msg = f"""🎉 **AI Over Dub завершен!**
+
+    🎬 **{task_info.get('original_title', 'YouTube Video')}**
+    🎙️ Язык: {task_info.get('language_name', 'Неизвестно')}
+
+    📊 **Прогресс:**
+    {self.get_overdub_progress_bar(100)} 100% - Готово!
+
+    ⏱️ Обработано за {self.get_processing_time(task_id)}
+
+    🎭 **Команда AI рабочих завершила работу:**
+    🤖 Whisper AI - распознал речь
+    🧠 Gemini AI - перевел с контекстом  
+    🗣️ Edge TTS - озвучил
+    🎬 FFmpeg - собрал видео"""
+                
+                # Edit the processing message
+                await self.client.edit_message(
+                    task_info['chat_id'],
+                    task_info['message_id'],
+                    completion_msg
+                )
+                
+                # Send AI Over Dub results
+                result = data.get('result', {})
+                if isinstance(result, str):
+                    result = json.loads(result)
+                    
+                target_language = task_info.get('target_language', 'unknown')
+                
+                # Отправляем видео с AI Over Dub (если есть)
+                video_path = result.get('overdub_video_path')
+                if video_path and os.path.exists(video_path):
+                    try:
+                        await self.client.send_file(
+                            task_info['chat_id'],
+                            video_path,
+                            caption=f"🎭 **AI Over Dub Video**\n🎙️ Язык: {task_info.get('language_name', target_language)}\n\n✨ Полностью создано ИИ: перевод, озвучка, синхронизация!"
+                        )
+                        logger.info(f"✅ Sent AI Over Dub video: {video_path}")
+                    except Exception as e:
+                        logger.error(f"❌ Error sending AI Over Dub video: {e}")
+                
+                # Отправляем аудио (если видео недоступно или как дополнение)
+                audio_path = result.get('overdub_audio_path')
+                if audio_path and os.path.exists(audio_path):
+                    try:
+                        await self.client.send_file(
+                            task_info['chat_id'],
+                            audio_path,
+                            caption=f"🎙️ **AI Over Dub Audio**\n🎭 Озвучка: {task_info.get('language_name', target_language)}"
+                        )
+                        logger.info(f"✅ Sent AI Over Dub audio: {audio_path}")
+                    except Exception as e:
+                        logger.error(f"❌ Error sending AI Over Dub audio: {e}")
+            
+            else:
+                # 🔥 СОХРАНЕННАЯ ОРИГИНАЛЬНАЯ ЛОГИКА для всех остальных типов задач
+                completion_msg = f"""✅ **Обработка завершена!**
 
     🎬 **{task_info.get('title', 'YouTube Video')}**
     👤 *{task_info.get('author', 'Unknown')}*
@@ -1048,98 +1247,98 @@ class TelegramBotService:
     {self.get_progress_bar(100)} 100% - Готово!
 
     ⏱️ Обработано за {self.get_processing_time(task_id)}"""
-            
-            # Edit the processing message
-            await self.client.edit_message(
-                task_info['chat_id'],
-                task_info['message_id'],
-                completion_msg
-            )
-            
-            # Send result
-            result = data.get('result', {})
-            if isinstance(result, str):
-                result = json.loads(result)  # Parse JSON string
                 
-            if task_info['type'] == 'video':
-                summary = result.get('summary_short', 'Summary not available')
-                await self.client.send_message(task_info['chat_id'], f"📝 **Summary:**\n{summary}")
-
-            elif task_info['type'] == 'voice_overdub':  # 🔥 ОЗВУЧКА
-                # Обработка результатов озвучки
-                target_language = task_info.get('target_language', 'unknown')
-                translated_text = result.get('translated_text', 'Translation not available')
-                video_path = result.get('video_path')
-                audio_path = result.get('audio_path')
-                
-                # Отправляем переведенный текст
-                await self.client.send_message(
-                    task_info['chat_id'], 
-                    f"🎙️ **Перевод на {target_language.upper()}:**\n\n{translated_text[:500]}{'...' if len(translated_text) > 500 else ''}"
+                # Edit the processing message
+                await self.client.edit_message(
+                    task_info['chat_id'],
+                    task_info['message_id'],
+                    completion_msg
                 )
                 
-                # Отправляем видео с озвучкой (если есть)
-                if video_path and os.path.exists(video_path):
-                    try:
-                        await self.client.send_file(
-                            task_info['chat_id'],
-                            video_path,
-                            caption=f"🎬 Видео с озвучкой на {target_language.upper()}"
-                        )
-                        logger.info(f"✅ Sent overdubbed video: {video_path}")
-                    except Exception as e:
-                        logger.error(f"❌ Error sending video: {e}")
-                
-                # Отправляем аудио (если видео недоступно)
-                elif audio_path and os.path.exists(audio_path):
-                    try:
-                        await self.client.send_file(
-                            task_info['chat_id'],
-                            audio_path,
-                            caption=f"🎙️ Аудио перевод на {target_language.upper()}"
-                        )
-                        logger.info(f"✅ Sent translated audio: {audio_path}")
-                    except Exception as e:
-                        logger.error(f"❌ Error sending audio: {e}")
+                # Send result
+                result = data.get('result', {})
+                if isinstance(result, str):
+                    result = json.loads(result)  # Parse JSON string
+                    
+                if task_info['type'] == 'video':
+                    summary = result.get('summary_short', 'Summary not available')
+                    await self.client.send_message(task_info['chat_id'], f"📝 **Summary:**\n{summary}")
 
-            elif task_info['type'] == 'video':  # 🔥 ОБЫЧНЫЕ ВИДЕО
-                summary = result.get('summary_short', 'Summary not available')
-                await self.client.send_message(task_info['chat_id'], f"📝 **Summary:**\n{summary}")
-                
-                # 🔥 ДОБАВИТЬ ОТПРАВКУ ФАЙЛА:
-                # 🔥 ПРАВИЛЬНАЯ ОТПРАВКА ФАЙЛА ОТ FILE MANAGER:
-                files = result.get('files', [])
-                if files and len(files) > 0:
-                    for file_info in files:
-                        file_path = file_info.get('path')
-                        filename = file_info.get('filename', 'summary_file')
-                        
-                        if file_path and file_path.endswith(('.md', '.txt', '.pdf')):
-                            logger.info(f"📤 Attempting to send file: {file_path}")
-                            try:
-                                await self.client.send_file(
-                                    task_info['chat_id'], 
-                                    file_path,
-                                    caption=f"📄 {filename}"
-                                )
-                                logger.info(f"✅ File sent successfully: {filename}")
-                            except Exception as e:
-                                logger.error(f"❌ Error sending file {file_path}: {e}")
-                        else:
-                            logger.warning(f"⚠️ Skipping invalid file: {file_path}")
-                else:
-                    logger.warning(f"❌ No files found in result. Available keys: {list(result.keys())}")
-                    # Отправляем хотя бы текстовый результат
-                    full_summary = result.get('summaries', {})
-                    if full_summary:
-                        summary_text = full_summary.get('medium', full_summary.get('short', 'No summary available'))
-                        await self.client.send_message(task_info['chat_id'], f"📄 **Полный текст:**\n\n{summary_text}")
+                elif task_info['type'] == 'voice_overdub':  # 🔥 ОЗВУЧКА (СОХРАНЕНО)
+                    # Обработка результатов озвучки
+                    target_language = task_info.get('target_language', 'unknown')
+                    translated_text = result.get('translated_text', 'Translation not available')
+                    video_path = result.get('video_path')
+                    audio_path = result.get('audio_path')
+                    
+                    # Отправляем переведенный текст
+                    await self.client.send_message(
+                        task_info['chat_id'], 
+                        f"🎙️ **Перевод на {target_language.upper()}:**\n\n{translated_text[:500]}{'...' if len(translated_text) > 500 else ''}"
+                    )
+                    
+                    # Отправляем видео с озвучкой (если есть)
+                    if video_path and os.path.exists(video_path):
+                        try:
+                            await self.client.send_file(
+                                task_info['chat_id'],
+                                video_path,
+                                caption=f"🎬 Видео с озвучкой на {target_language.upper()}"
+                            )
+                            logger.info(f"✅ Sent overdubbed video: {video_path}")
+                        except Exception as e:
+                            logger.error(f"❌ Error sending video: {e}")
+                    
+                    # Отправляем аудио (если видео недоступно)
+                    elif audio_path and os.path.exists(audio_path):
+                        try:
+                            await self.client.send_file(
+                                task_info['chat_id'],
+                                audio_path,
+                                caption=f"🎙️ Аудио перевод на {target_language.upper()}"
+                            )
+                            logger.info(f"✅ Sent translated audio: {audio_path}")
+                        except Exception as e:
+                            logger.error(f"❌ Error sending audio: {e}")
+
+                elif task_info['type'] == 'video':  # 🔥 ОБЫЧНЫЕ ВИДЕО (СОХРАНЕНО)
+                    summary = result.get('summary_short', 'Summary not available')
+                    await self.client.send_message(task_info['chat_id'], f"📝 **Summary:**\n{summary}")
+                    
+                    # 🔥 ДОБАВИТЬ ОТПРАВКУ ФАЙЛА (СОХРАНЕНО):
+                    # 🔥 ПРАВИЛЬНАЯ ОТПРАВКА ФАЙЛА ОТ FILE MANAGER (СОХРАНЕНО):
+                    files = result.get('files', [])
+                    if files and len(files) > 0:
+                        for file_info in files:
+                            file_path = file_info.get('path')
+                            filename = file_info.get('filename', 'summary_file')
+                            
+                            if file_path and file_path.endswith(('.md', '.txt', '.pdf')):
+                                logger.info(f"📤 Attempting to send file: {file_path}")
+                                try:
+                                    await self.client.send_file(
+                                        task_info['chat_id'], 
+                                        file_path,
+                                        caption=f"📄 {filename}"
+                                    )
+                                    logger.info(f"✅ File sent successfully: {filename}")
+                                except Exception as e:
+                                    logger.error(f"❌ Error sending file {file_path}: {e}")
+                            else:
+                                logger.warning(f"⚠️ Skipping invalid file: {file_path}")
+                    else:
+                        logger.warning(f"❌ No files found in result. Available keys: {list(result.keys())}")
+                        # Отправляем хотя бы текстовый результат
+                        full_summary = result.get('summaries', {})
+                        if full_summary:
+                            summary_text = full_summary.get('medium', full_summary.get('short', 'No summary available'))
+                            await self.client.send_message(task_info['chat_id'], f"📄 **Полный текст:**\n\n{summary_text}")
             
-            # Cleanup
+            # Cleanup (СОХРАНЕНО)
             del self.processing_tasks[task_id]
             
         except Exception as e:
-            logger.error(f"Error handling task completion: {e}")
+            logger.error(f"Error handling task completion: {e}")  # СОХРАНЕНО
     # отработать эту заглушку 
     def get_processing_time(self, task_id: str) -> str:
         """Calculate processing time (placeholder)"""
@@ -1204,16 +1403,36 @@ class TelegramBotService:
             }
 
     async def update_progress_message(self, task_id: str, task_info: Dict, data: Dict):
-        """Update progress message with current status"""
+        """🔥 ОБНОВЛЕНО: Update progress message with AI Over Dub support"""
         try:
             result = data.get('result', {})
             if isinstance(result, str):
                 result = json.loads(result)
             
-            # Определяем этап обработки по источнику
-            stage_info = self.get_processing_stage(data, result)
-            
-            progress_msg = f"""⏳ **Обрабатываю видео...**
+            # 🔥 НОВОЕ: Специальная обработка для AI Over Dub
+            if task_info.get('type') == 'ai_overdub':
+                stage_info = self.get_overdub_stage_info(data, result)
+                
+                progress_msg = f"""🎭 **AI Over Dub в процессе...**
+
+    🎬 **{task_info.get('original_title', 'YouTube Video')}**
+    🎙️ Язык: {task_info.get('language_name', 'Неизвестно')}
+
+    {stage_info['emoji']} **{stage_info['stage_name']}**
+
+    📊 **Прогресс:**
+    {stage_info['bar']} {stage_info['percent']}% - {stage_info['message']}
+
+    ⏱️ {stage_info['time_estimate']}"""
+
+                if stage_info.get('action'):
+                    progress_msg += f"\n\n🔄 {stage_info['action']}"
+
+            else:
+                # Обычная обработка для других типов задач
+                stage_info = self.get_processing_stage(data, result)
+                
+                progress_msg = f"""⏳ **Обрабатываю видео...**
 
     🎬 **{task_info.get('title', 'YouTube Video')}**
     👤 *{task_info.get('author', 'Unknown')}*
