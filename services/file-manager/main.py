@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Optional, Dict, List, Tuple
 from pathlib import Path
 import uuid
+import base64
 
 # Import shared components
 import sys
@@ -28,6 +29,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
 import markdown
 from markdown.extensions import toc, tables, fenced_code
+import shutil
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -381,20 +383,88 @@ class MarkdownGenerator:
                 content_lines.append(f"{summaries['summary_detailed']}\n")
                 content_lines.append("---\n")
             
-            # 🔥 ДОБАВИТЬ СЕКЦИЮ КАДРОВ:
+            # 🔥 ДОБАВИТЬ СЕКЦИЮ КАДРОВ С DEBUG:
             if frames_data:
                 content_lines.append("## 🎬 Video Frames\n")
                 content_lines.append("*Key moments from the video with corresponding content:*\n")
+
+                # 🔍 DEBUG: Информация о frames_data
+                logger.info(f"🔍 FRAMES DEBUG: Processing {len(frames_data)} frames")
+                for i, frame in enumerate(frames_data):
+                    logger.info(f"🔍 FRAME {i+1} DEBUG:")
+                    logger.info(f"   - Keys: {list(frame.keys())}")
+                    logger.info(f"   - Path: {frame.get('path', 'NO PATH')}")
+                    logger.info(f"   - Filename: {frame.get('filename', 'NO FILENAME')}")
+                    if frame.get('path'):
+                        path_exists = os.path.exists(frame.get('path'))
+                        logger.info(f"   - Path exists: {path_exists}")
+                        if path_exists:
+                            file_size = os.path.getsize(frame.get('path'))
+                            logger.info(f"   - File size: {file_size} bytes")
+
+                md_dir = os.path.dirname(file_path)
+                images_dir = os.path.join(md_dir, "images")
+                os.makedirs(images_dir, exist_ok=True)
+                logger.info(f"🔍 DEBUG: Created images directory: {images_dir}")
                 
                 for i, frame in enumerate(frames_data, 1):
                     timestamp = frame.get('formatted_timestamp', '00:00')
                     segment = frame.get('transcript_segment', 'No transcript available')
-                    filename = frame.get('filename', f'frame_{i}.jpg')
+                    frame_path = frame.get('path')
                     
                     content_lines.append(f"### Frame {i} - {timestamp}\n")
-                    content_lines.append(f"![Frame {i}]({filename})\n")
+                    
+                    # 🔍 DEBUG: Обработка каждого кадра
+                    logger.info(f"🔍 PROCESSING Frame {i}:")
+                    logger.info(f"   - Frame path: {frame_path}")
+                    
+                    # 🔥 КОПИРУЕМ ИЗОБРАЖЕНИЕ
+                    if frame_path and os.path.exists(frame_path):
+                        try:
+                            filename = os.path.basename(frame_path)
+                            new_image_path = os.path.join(images_dir, filename)
+                            
+                            logger.info(f"   - Copying: {frame_path} -> {new_image_path}")
+                            
+                            # Копируем файл
+                            shutil.copy2(frame_path, new_image_path)
+                            
+                            # Проверяем что файл скопировался
+                            if os.path.exists(new_image_path):
+                                copied_size = os.path.getsize(new_image_path)
+                                logger.info(f"   - ✅ Copy successful! Size: {copied_size} bytes")
+                                
+                                relative_path = f"images/{filename}"
+                                content_lines.append(f"![Frame {i}]({relative_path})\n")
+                                logger.info(f"   - ✅ Added to markdown: {relative_path}")
+                            else:
+                                logger.error(f"   - ❌ Copy failed - file does not exist after copy")
+                                content_lines.append(f"*[Image copy failed - file not created]*\n")
+                                
+                        except Exception as e:
+                            logger.error(f"   - ❌ Could not copy image: {e}")
+                            content_lines.append(f"*[Image copy error: {str(e)}]*\n")
+                    else:
+                        if not frame_path:
+                            logger.warning(f"   - ⚠️ No frame path provided")
+                            content_lines.append(f"*[No image path provided]*\n")
+                        else:
+                            logger.warning(f"   - ⚠️ Frame path does not exist: {frame_path}")
+                            content_lines.append(f"*[Image not found: {frame_path}]*\n")
+
                     content_lines.append(f"**Context:** {segment}\n")
                     content_lines.append("---\n")
+                
+                # 🔍 ФИНАЛЬНЫЙ DEBUG: Проверяем что получилось
+                if os.path.exists(images_dir):
+                    image_files = [f for f in os.listdir(images_dir) if f.endswith(('.jpg', '.jpeg', '.png'))]
+                    logger.info(f"🔍 FINAL DEBUG: Images directory contains {len(image_files)} images:")
+                    for img_file in image_files:
+                        img_path = os.path.join(images_dir, img_file)
+                        img_size = os.path.getsize(img_path)
+                        logger.info(f"   - {img_file} ({img_size} bytes)")
+                else:
+                    logger.error(f"❌ FINAL DEBUG: Images directory does not exist: {images_dir}")
             
             # Original transcript (if available)
             if summaries.get('transcript'):
@@ -415,12 +485,22 @@ class MarkdownGenerator:
             await asyncio.to_thread(self._write_file, file_path, content)
             
             logger.info(f"✅ Markdown generated: {file_path}")
+            
+            # 🔍 ФИНАЛЬНАЯ ПРОВЕРКА MARKDOWN файла
+            if os.path.exists(file_path):
+                md_size = os.path.getsize(file_path)
+                logger.info(f"✅ Markdown file created: {file_path} ({md_size} bytes)")
+            else:
+                logger.error(f"❌ Markdown file was not created: {file_path}")
+            
             return True
             
         except Exception as e:
             logger.error(f"Error generating Markdown: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return False
-    
+
     def _write_file(self, file_path: str, content: str):
         """Write content to file (sync operation)"""
         with open(file_path, 'w', encoding='utf-8') as f:

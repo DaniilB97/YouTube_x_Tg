@@ -471,11 +471,58 @@ class VideoProcessorService:
                 error=f"Video processing failed: {e}"
             )
 
+    def copy_frames_to_shared_storage(self, frames_data: List[Dict], task_id: str) -> List[Dict]:
+        """Copy frames from temp directory to shared storage"""
+        try:
+            if not frames_data:
+                return frames_data
+            
+            # Создаем папку в общем storage
+            shared_frames_dir = os.path.join('/app/storage', f'temp_frames_{task_id}')
+            os.makedirs(shared_frames_dir, exist_ok=True)
+            
+            logger.info(f"🔍 DEBUG: Created shared frames directory: {shared_frames_dir}")
+            
+            # Копируем каждый кадр
+            updated_frames = []
+            for i, frame in enumerate(frames_data):
+                if 'path' in frame and os.path.exists(frame['path']):
+                    original_path = frame['path']
+                    filename = os.path.basename(original_path)
+                    new_path = os.path.join(shared_frames_dir, filename)
+                    
+                    # Копируем файл
+                    shutil.copy2(original_path, new_path)
+                    
+                    # Создаем новый объект frame с обновленным путем
+                    updated_frame = frame.copy()
+                    updated_frame['path'] = new_path
+                    
+                    # Проверяем что файл скопировался
+                    if os.path.exists(new_path):
+                        file_size = os.path.getsize(new_path)
+                        logger.info(f"✅ Copied frame {i+1}: {filename} ({file_size} bytes)")
+                        updated_frames.append(updated_frame)
+                    else:
+                        logger.error(f"❌ Failed to copy frame {i+1}: {filename}")
+                        updated_frames.append(frame)  # Используем оригинальный
+                else:
+                    logger.warning(f"⚠️ Frame {i+1}: Invalid or missing path: {frame.get('path', 'None')}")
+                    updated_frames.append(frame)
+            
+            logger.info(f"✅ Copied {len(updated_frames)} frames to shared storage: {shared_frames_dir}")
+            return updated_frames
+            
+        except Exception as e:
+            logger.error(f"❌ Error copying frames to shared storage: {e}")
+            return frames_data
+
     async def extract_video_frames(self, video_id: str) -> List[Dict]:
         """Extract frames for full analysis"""
         try:
             # Download video for frame extraction
             video_path = self.frame_extractor.download_video_for_analysis(video_id)
+            logger.info(f"🔍 DEBUG: Starting extract_video_frames for {video_id}")
             
             if not video_path:
                 logger.error("Failed to download video for frame extraction")
@@ -484,11 +531,20 @@ class VideoProcessorService:
             # Extract key frames
             frames_data = self.frame_extractor.extract_key_frames(video_path, max_frames=10)
             
-            # Cleanup video file (keep frames)
+            # 🔥 НОВОЕ: Копируем кадры в общий storage
+            if frames_data:
+                task_id = generate_task_id()  # Или используйте текущий task_id
+                frames_data = self.copy_frames_to_shared_storage(frames_data, task_id)
+                logger.info(f"🔍 DEBUG: After copying - frames count: {len(frames_data)}")
+            
+            # Cleanup video file (keep frames in shared storage)
             try:
                 os.remove(video_path)
             except:
                 pass
+            
+            # Cleanup temp directory (frames now in shared storage)
+            self.frame_extractor.cleanup()
             
             return frames_data
             
