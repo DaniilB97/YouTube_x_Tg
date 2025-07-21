@@ -18,7 +18,7 @@ from shared.utils import generate_task_id
 # Voice processing libraries
 import edge_tts
 import pydub
-from googletrans import Translator
+from deep_translator import GoogleTranslator
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -28,7 +28,7 @@ class VoiceProcessor:
     """Handle voice translation and TTS"""
     
     def __init__(self):
-        self.translator = Translator()
+        #self.translator = Translator() # deep translotor doesn't require initialization 
         self.temp_dir = tempfile.mkdtemp(prefix="voice_processing_")
         
         # Voice mapping for different languages
@@ -48,11 +48,8 @@ class VoiceProcessor:
             
             for sentence in sentences:
                 if len(sentence.strip()) > 0:
-                    translated = self.translator.translate(
-                        sentence.strip(), 
-                        dest=target_language
-                    )
-                    translated_sentences.append(translated.text)
+                    translated = GoogleTranslator(source='auto', target=target_language).translate(sentence.strip())
+                    translated_sentences.append(translated)
             
             result = '. '.join(translated_sentences)
             logger.info(f"✅ Translated {len(text)} chars to {target_language}")

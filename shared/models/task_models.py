@@ -15,7 +15,7 @@ class TaskType(Enum):
     AI_CONVERSATION = "ai_conversation"
     FILE_GENERATION = "file_generation"
     SUMMARY_GENERATION = "summary_generation" 
-    VOICE_PROCESSING = "voice_processing"
+    DUB_PROCESSING = "dub_processing"
 
 
 class TaskStatus(Enum):

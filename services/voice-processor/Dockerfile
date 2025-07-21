@@ -11,11 +11,11 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy shared components
-COPY shared/ ./shared/
+# Copy service files FIRST
+COPY . ./
 
-# Copy service files
-COPY services/voice-processor/ ./
+# Copy shared components LAST (so they don't get overwritten)
+#COPY shared/ ./shared/
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

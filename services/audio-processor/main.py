@@ -334,6 +334,10 @@ class AudioProcessorService:
     async def create_ai_summary_task(self, task_data, result):
         """Создать задачу для AI суммаризации или озвучки"""
         try:
+            # В начале метода добавьте:
+            logger.info(f"🔍 DEBUG: processing_type = {processing_type}")
+            logger.info(f"🔍 DEBUG: target_language = {target_language}")
+            logger.info(f"🔍 DEBUG: task_data.data keys = {list(task_data.data.keys())}")
             # 🔥 ДОБАВИТЬ ИЗВЛЕЧЕНИЕ ДАННЫХ ДЛЯ ОЗВУЧКИ:
             frames_data = task_data.data.get('frames_data', [])
             processing_type = task_data.data.get('processing_type', 'text_only')
