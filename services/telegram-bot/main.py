@@ -486,7 +486,15 @@ class TelegramBotService:
             elif data.startswith("finish_feedback_"):
                 rating = int(data.replace("finish_feedback_", ""))
                 await self.finish_feedback(event, rating, None)
+            elif data == "process_voice_overdub":  # 🔥 НОВОЕ
+                await self.show_voice_overdub_selection(event)    
+            elif data.startswith("voice_"):
+                language_code = data.replace("voice_", "")
+                await self.handle_voice_overdub_selection(event, language_code)
+            elif data == "back_to_types":
+                await self.show_processing_type_selection(event)
             
+
                 
             # 🔥 НОВОЕ: Обработка кнопок формата файлов
             elif data.startswith("format_"):
@@ -687,6 +695,21 @@ class TelegramBotService:
             logger.error(f"Error finishing feedback: {e}")
             await event.edit("❌ Ошибка при сохранении отзыва")
 
+    async def show_voice_overdub_selection(self, event): #function to choose overdubbing
+        """Show voice overdub language selection"""
+        buttons = [
+            [Button.inline("🇷🇺 Русский", data="voice_ru"),
+            Button.inline("🇺🇸 English", data="voice_en")],
+            [Button.inline("🇪🇸 Español", data="voice_es"),
+            Button.inline("🇫🇷 Français", data="voice_fr")],
+            [Button.inline("🔙 Назад", data="back_to_types")]
+        ]
+        
+        await event.edit(
+            "🎙️ **Выберите язык озвучки:**\n\nВидео будет переведено и озвучено на выбранном языке",
+            buttons=buttons
+        )
+
     async def handle_youtube_url(self, event, user: User):
         """Handle YouTube URL processing with format selection"""
         try:
@@ -744,7 +767,8 @@ class TelegramBotService:
             buttons = [
                 [Button.inline("📝 Только текст", data="process_text_only")],
                 [Button.inline("📄 Файлы", data="process_files"), 
-                    Button.inline("🎬 Полный анализ", data="process_full")],
+                Button.inline("🎬 Полный анализ", data="process_full")],
+                [Button.inline("🎙️ Озвучка", data="process_voice_overdub")] #button for voice overdubbing 
             ]
             
             processing_msg = await event.reply(
@@ -843,6 +867,85 @@ class TelegramBotService:
         except Exception as e:
             logger.error(f"Error handling audio file: {e}")
     
+    async def handle_voice_overdub_selection(self, event, target_language: str):
+        """Handle voice overdub language selection"""
+        user_state = self.user_states.get(event.sender_id)
+        if not user_state:
+            await event.edit("❌ Сессия истекла. Отправьте ссылку заново.")
+            return
+        
+        # Определяем название языка
+        language_names = {
+            'ru': 'Русский',
+            'en': 'English', 
+            'es': 'Español',
+            'fr': 'Français'
+        }
+        
+        language_name = language_names.get(target_language, target_language)
+        
+        # Обновляем сообщение
+        await event.edit(f"""⏳ **Начинаю перевод и озвучку...**
+
+    🎬 **{user_state['title']}**
+    👤 *{user_state['author']}*
+    ⏱️ *{user_state.get('duration', 'Неизвестно')}*
+
+    🎙️ Целевой язык: {language_name}
+
+    📊 **Прогресс:**
+    {self.get_progress_bar(0)} 0% - Подготовка...
+
+    ⏱️ Оценочное время: 3-5 минут""")
+        
+        # Отправляем запрос на обработку
+        task_id = await self.send_video_processing_request(
+            user=user_state['user'],
+            youtube_url=user_state['url'],
+            chat_id=user_state['chat_id'],
+            processing_type="voice_overdub",
+            file_format="video",  # Новый формат для видео
+            target_language=target_language  # 🔥 НОВЫЙ ПАРАМЕТР
+        )
+        
+        if task_id:
+            # Сохраняем информацию о задаче
+            self.processing_tasks[task_id] = {
+                'user_id': user_state['user'].user_id,
+                'chat_id': user_state['chat_id'],
+                'message_id': user_state['message_id'],
+                'type': 'voice_overdub',
+                'processing_type': 'voice_overdub',
+                'target_language': target_language,
+                'original_title': user_state['title']
+            }
+            
+            # Убираем состояние пользователя
+            del self.user_states[event.sender_id]
+            
+            logger.info(f"Voice overdub task created: {task_id} (target: {target_language})")
+        else:
+            await event.edit("❌ **Ошибка**\n\nНе удалось запустить озвучку. Попробуйте позже.")
+
+    async def show_processing_type_selection(self, event):
+        """Show processing type selection again"""
+        user_state = self.user_states.get(event.sender_id)
+        if not user_state:
+            await event.edit("❌ Сессия истекла. Отправьте ссылку заново.")
+            return
+        
+        buttons = [
+            [Button.inline("📝 Только текст", data="process_text_only")],
+            [Button.inline("📄 Файлы", data="process_files"), 
+            Button.inline("🎬 Полный анализ", data="process_full")],
+            [Button.inline("🎙️ Озвучка", data="process_voice_overdub")]
+        ]
+        
+        await event.edit(
+            f"📹 **{user_state['title']}**\n👤 *{user_state['author']}*\n⏱️ *{user_state.get('duration', 'Неизвестно')}*\n\n🎬 Что сделать с видео?\n\nВыберите тип обработки:",
+            buttons=buttons
+        )
+
     async def send_video_processing_request(self, user: User, youtube_url: str, chat_id: int, processing_type: str = "text_only", file_format: str = "txt") -> Optional[str]:
         """Send video processing request to API Gateway"""
         try:
