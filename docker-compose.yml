@@ -122,6 +122,21 @@ services:
     networks:
       - app-network
 
+  voice-processor:
+    build: ./services/voice-processor
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - STORAGE_DIR=/app/storage
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - ./shared:/app/shared:ro
+      - file_storage:/app/storage
+    networks:
+      - app-network
+
   # AI Processing Service - IMPROVED: Better Ollama dependency management
   ai-processor:
     build: ./services/ai-processor

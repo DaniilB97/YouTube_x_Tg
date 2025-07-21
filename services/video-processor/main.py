@@ -373,13 +373,21 @@ class VideoProcessorService:
         """Обрабатывает одну задачу"""
         video_id = task_data.data.get('video_id')
         processing_type = task_data.data.get('processing_type', 'text_only')  # 🔥 ДОБАВИТЬ
+        target_language = task_data.data.get('target_language') 
         
         try:
             await self.redis.set_task_status(task_data.task_id, TaskStatus.PROCESSING)
 
             # 🔥 НОВОЕ: Полный анализ с кадрами
             extra_data = {}
-            if processing_type == 'full_analysis':
+
+            if processing_type == 'voice_overdub':
+                # Озвучка видео
+                logger.info(f"🎙️ Voice overdub requested for {video_id} → {target_language}")
+                video_path = await self.download_video_for_overdub(video_id)
+                extra_data = {'video_path': video_path, 'target_language': target_language}
+
+            elif processing_type == 'full_analysis':
                 logger.info(f"🎬 Full analysis requested for {video_id} - extracting frames")
                 try:
                     frames_data = await self.extract_video_frames(video_id)
@@ -403,33 +411,59 @@ class VideoProcessorService:
                 logger.info(f"🔍 DEBUG: extra_data keys: {list(extra_data.keys()) if extra_data else 'None'}")
                 logger.info(f"🔍 DEBUG: frames in extra_data: {len(extra_data.get('frames_data', [])) if extra_data else 0}")
                 
-                ai_task_data = TaskData(
-                    task_id=task_data.task_id,  # ТОТ ЖЕ ID!
-                    task_type=TaskType.SUMMARY_GENERATION,
-                    user_id=task_data.user_id,
-                    chat_id=task_data.chat_id,
-                    status=TaskStatus.PENDING,
-                    priority=task_data.priority,
-                    message_id=task_data.message_id,
-                    data={
-                        'transcript': transcript,
-                        'language': lang,
-                        'title': task_data.data.get('title', f'YouTube Video {video_id}'),
-                        'file_format': task_data.data.get('file_format', 'both'),
-                        'user_language': task_data.data.get('user_language', 'en'),
-                        'processing_type': processing_type,  # 🔥 ПЕРЕДАЕМ ТИП
-                        **extra_data  # 🔥 ДОБАВЛЯЕМ КАДРЫ
-                    }
-                )
-                
-                success = await self.redis.enqueue_task('ai_processing_queue', ai_task_data)
-                if success:
-                    logger.info(f"✅ Created AI task for {task_data.task_id}")
+                if processing_type == 'voice_overdub':
+                    # 🔥 НОВОЕ: Создаем задачу для Voice Processor
+                    voice_task_data = TaskData(
+                        task_id=task_data.task_id,
+                        task_type=TaskType.VOICE_PROCESSING,  # 🔥 НОВЫЙ ТИП
+                        user_id=task_data.user_id,
+                        chat_id=task_data.chat_id,
+                        status=TaskStatus.PENDING,
+                        priority=task_data.priority,
+                        message_id=task_data.message_id,
+                        data={
+                            'transcript': transcript,
+                            'language': lang,
+                            'title': task_data.data.get('title', f'YouTube Video {video_id}'),
+                            'target_language': target_language,
+                            **extra_data
+                        }
+                    )
+                    
+                    success = await self.redis.enqueue_task('voice_processing_queue', voice_task_data)
+                    if success:
+                        logger.info(f"✅ Created voice processing task for {task_data.task_id}")
+                    else:
+                        raise Exception("Failed to create voice processing task")
                 else:
-                    raise Exception("Failed to create AI task")
+                    # 🔥 СУЩЕСТВУЮЩЕЕ: AI Processor для обычной обработки
+                    ai_task_data = TaskData(
+                        task_id=task_data.task_id,
+                        task_type=TaskType.SUMMARY_GENERATION,
+                        user_id=task_data.user_id,
+                        chat_id=task_data.chat_id,
+                        status=TaskStatus.PENDING,
+                        priority=task_data.priority,
+                        message_id=task_data.message_id,
+                        data={
+                            'transcript': transcript,
+                            'language': lang,
+                            'title': task_data.data.get('title', f'YouTube Video {video_id}'),
+                            'file_format': task_data.data.get('file_format', 'both'),
+                            'user_language': task_data.data.get('user_language', 'en'),
+                            'processing_type': processing_type,
+                            **extra_data
+                        }
+                    )
+                    
+                    success = await self.redis.enqueue_task('ai_processing_queue', ai_task_data)
+                    if success:
+                        logger.info(f"✅ Created AI task for {task_data.task_id}")
+                    else:
+                        raise Exception("Failed to create AI task")
 
             else:
-                # ПЛАН Б: Скачиваем аудио
+                # ПЛАН Б: Скачиваем аудио (существующий код с дополнениями)
                 logger.info(f"No transcript for {video_id}. Downloading audio for Whisper.")
                 audio_path = self._download_audio(video_id)
 
@@ -437,7 +471,7 @@ class VideoProcessorService:
                     logger.info(f"✅ Audio downloaded for {video_id}. Enqueuing for transcription.")
                     
                     audio_task_data = TaskData(
-                        task_id=task_data.task_id,  # ТОТ ЖЕ ID!
+                        task_id=task_data.task_id,
                         task_type=TaskType.AUDIO_PROCESSING,
                         user_id=task_data.user_id,
                         chat_id=task_data.chat_id,
@@ -450,8 +484,9 @@ class VideoProcessorService:
                             'audio_type': 'youtube_audio',
                             'file_format': task_data.data.get('file_format', 'both'),
                             'user_language': task_data.data.get('user_language', 'en'),
-                            'processing_type': processing_type,  # 🔥 ПЕРЕДАЕМ ТИП
-                            **extra_data  # 🔥 ДОБАВЛЯЕМ КАДРЫ
+                            'processing_type': processing_type,
+                            'target_language': target_language,  # 🔥 ДОБАВИТЬ
+                            **extra_data
                         }
                     )
                     
@@ -600,6 +635,35 @@ class VideoProcessorService:
             return None
         except Exception as e:
             logger.error(f"Error downloading audio for {video_id}: {e}")
+            return None
+
+    async def download_video_for_overdub(self, video_id: str) -> Optional[str]:
+        """Download video for voice overdub"""
+        try:
+            url = f"https://www.youtube.com/watch?v={video_id}"
+            
+            # Скачиваем видео в приемлемом качестве
+            ydl_opts = {
+                'format': 'best[height<=720]/best',  # До 720p
+                'outtmpl': f'{self.output_dir}/video_for_overdub_{video_id}.%(ext)s',
+                'quiet': True,
+                'no_warnings': True,
+            }
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+            
+            # Найти скачанный файл
+            for file in os.listdir(self.output_dir):
+                if file.startswith(f'video_for_overdub_{video_id}'):
+                    video_path = os.path.join(self.output_dir, file)
+                    logger.info(f"✅ Downloaded video for overdub: {video_path}")
+                    return video_path
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error downloading video for overdub: {e}")
             return None
 
 async def main():

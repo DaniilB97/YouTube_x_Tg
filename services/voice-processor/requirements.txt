@@ -1,0 +1,17 @@
+# Shared dependencies
+asyncio
+logging
+tempfile
+subprocess
+
+# Voice processing
+edge-tts==6.1.8
+pydub==0.25.1
+googletrans==4.0.0rc1
+
+# Audio processing  
+ffmpeg-python==0.2.0
+
+# Redis and database
+redis==5.0.1
+supabase==1.2.0

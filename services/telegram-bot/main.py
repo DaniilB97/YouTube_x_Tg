@@ -946,7 +946,7 @@ class TelegramBotService:
             buttons=buttons
         )
 
-    async def send_video_processing_request(self, user: User, youtube_url: str, chat_id: int, processing_type: str = "text_only", file_format: str = "txt") -> Optional[str]:
+    async def send_video_processing_request(self, user: User, youtube_url: str, chat_id: int, processing_type: str = "text_only", file_format: str = "txt", target_language: str = None) -> Optional[str]:
         """Send video processing request to API Gateway"""
         try:
             async with aiohttp.ClientSession() as session:
@@ -959,6 +959,9 @@ class TelegramBotService:
                     "user_language": user.language
                 }
                 
+                if target_language:
+                    payload["target_language"] = target_language
+
                 async with session.post(
                     f"{self.api_gateway_url}/api/v1/video/process",
                     json=payload
@@ -1059,6 +1062,47 @@ class TelegramBotService:
                 result = json.loads(result)  # Parse JSON string
                 
             if task_info['type'] == 'video':
+                summary = result.get('summary_short', 'Summary not available')
+                await self.client.send_message(task_info['chat_id'], f"📝 **Summary:**\n{summary}")
+
+            elif task_info['type'] == 'voice_overdub':  # 🔥 ОЗВУЧКА
+                # Обработка результатов озвучки
+                target_language = task_info.get('target_language', 'unknown')
+                translated_text = result.get('translated_text', 'Translation not available')
+                video_path = result.get('video_path')
+                audio_path = result.get('audio_path')
+                
+                # Отправляем переведенный текст
+                await self.client.send_message(
+                    task_info['chat_id'], 
+                    f"🎙️ **Перевод на {target_language.upper()}:**\n\n{translated_text[:500]}{'...' if len(translated_text) > 500 else ''}"
+                )
+                
+                # Отправляем видео с озвучкой (если есть)
+                if video_path and os.path.exists(video_path):
+                    try:
+                        await self.client.send_file(
+                            task_info['chat_id'],
+                            video_path,
+                            caption=f"🎬 Видео с озвучкой на {target_language.upper()}"
+                        )
+                        logger.info(f"✅ Sent overdubbed video: {video_path}")
+                    except Exception as e:
+                        logger.error(f"❌ Error sending video: {e}")
+                
+                # Отправляем аудио (если видео недоступно)
+                elif audio_path and os.path.exists(audio_path):
+                    try:
+                        await self.client.send_file(
+                            task_info['chat_id'],
+                            audio_path,
+                            caption=f"🎙️ Аудио перевод на {target_language.upper()}"
+                        )
+                        logger.info(f"✅ Sent translated audio: {audio_path}")
+                    except Exception as e:
+                        logger.error(f"❌ Error sending audio: {e}")
+
+            elif task_info['type'] == 'video':  # 🔥 ОБЫЧНЫЕ ВИДЕО
                 summary = result.get('summary_short', 'Summary not available')
                 await self.client.send_message(task_info['chat_id'], f"📝 **Summary:**\n{summary}")
                 
