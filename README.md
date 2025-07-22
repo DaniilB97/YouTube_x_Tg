@@ -128,37 +128,6 @@ Use the "💬 Discuss Video" feature to:
 - Get clarifications on specific topics
 - Explore deeper insights with AI chat
 
-## 🏗️ Architecture Overview
-
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Telegram Bot  │────│  API Gateway    │────│ Video Processor │
-│                 │    │                 │    │                 │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │                       │
-         │              ┌─────────────────┐              │
-         │              │  Supabase DB    │              │
-         │              │ (Users/History) │              │
-         │              └─────────────────┘              │
-         │                       │                       │
-         │              ┌─────────────────┐              │
-         │              │     Redis       │              │
-         │              │  (Task Queue)   │              │
-         │              └─────────────────┘              │
-         │                       │                       │
-         ▼                       ▼                       ▼
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│ File Manager    │────│ AI Processor    │────│Audio Processor  │
-│                 │    │                 │    │                 │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │                       │
-         ▼                       ▼                       ▼
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   PDF/MD/TXT    │    │   Gemini API    │    │   Whisper AI    │
-│   Generation    │    │   Ollama        │    │   Voice Cloning │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-```
-
 ## 🔧 Services
 
 ### **API Gateway**
@@ -351,8 +320,7 @@ docker compose up -d --scale ai-processor=3 --scale video-processor=2
 
 ## 📝 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
+This project is licensed under the MIT License
 ## 🙏 Acknowledgments
 
 - **OpenAI Whisper** for audio transcription

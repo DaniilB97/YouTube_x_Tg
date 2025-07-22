@@ -381,18 +381,22 @@ class VideoProcessorService:
             # 🔥 НОВОЕ: Обработка AI Over Dub
             extra_data = {}
 
-            if processing_type == 'ai_overdub':  # 🔥 НОВЫЙ ТИП
-                # AI Over Dub - нужно и видео и подробная транскрипция с сегментами
+            if processing_type == 'ai_overdub':
                 logger.info(f"🎭 AI Over Dub requested for {video_id} → {target_language}")
-                video_path = await self.download_video_for_overdub(video_id)
-                extra_data = {'video_path': video_path, 'target_language': target_language}
-
+                video_path = await self.download_video_for_ai_overdub(video_id)  # 🔥 ИСПОЛЬЗОВАТЬ ПРАВИЛЬНЫЙ МЕТОД
+                if video_path and os.path.exists(video_path):
+                    logger.info(f"✅ Video ready for AI Over Dub: {video_path}")
+                    extra_data = {'video_path': video_path, 'target_language': target_language}
+                else:
+                    logger.warning(f"⚠️ Video download failed, AI Over Dub will be audio-only")
+                    extra_data = {'target_language': target_language}
+                """ old one
             elif processing_type == 'voice_overdub':
                 # Обычная озвучка (legacy)
                 logger.info(f"🎙️ Voice overdub requested for {video_id} → {target_language}")
                 video_path = await self.download_video_for_overdub(video_id)
                 extra_data = {'video_path': video_path, 'target_language': target_language}
-
+                """
             elif processing_type == 'full_analysis':
                 logger.info(f"🎬 Full analysis requested for {video_id} - extracting frames")
                 try:

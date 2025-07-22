@@ -138,22 +138,21 @@ services:
       - app-network
 
   ai-overdub-processor:
-    build:
-      context: .
-      dockerfile: services/ai-overdub-processor/Dockerfile
-    container_name: ai-overdub-processor
+    build: ./services/ai-overdub-processor
     environment:
       - REDIS_URL=redis://redis:6379
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - STORAGE_DIR=/app/storage
     volumes:
-      - ./shared:/app/shared
-      - ./storage:/app/storage
+      - ./shared:/app/shared:ro
+      - shared_storage:/app/storage
+      - temp_audio_data:/app/temp_audio
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     networks:
-      - youtube-summarizer
+      - app-network
     deploy:
       resources:
         limits:

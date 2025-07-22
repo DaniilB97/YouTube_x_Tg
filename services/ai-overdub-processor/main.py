@@ -242,22 +242,16 @@ class TTSGenerator:
             return translated_frames
     
     async def _generate_segment_audio(self, text: str, voice: str, output_path: str, target_duration: float) -> bool:
-        """Генерирует аудио для одного сегмента с учетом целевой длительности"""
+        """Генерирует аудио для одного сегмента с УМНОЙ корректировкой темпа"""
         try:
-            # Используем Edge TTS для высококачественного синтеза
             communicate = edge_tts.Communicate(text, voice)
             await communicate.save(output_path)
             
-            # Проверяем длительность и корректируем если нужно
             actual_duration = self._get_audio_duration(output_path)
             
             if actual_duration > 0:
-                # Если сгенерированное аудио значительно длиннее оригинала, ускоряем
-                if actual_duration > target_duration * 1.2:
-                    speed_factor = actual_duration / target_duration
-                    await self._adjust_audio_speed(output_path, speed_factor)
-                    logger.info(f"🏃 Adjusted audio speed by {speed_factor:.2f}x for better sync")
-                
+                # <<< НОВОЕ: Вызываем более умную функцию корректировки
+                await self._adjust_audio_pacing(output_path, actual_duration, target_duration)
                 return True
             else:
                 logger.error(f"Generated audio file is empty: {output_path}")
@@ -266,6 +260,46 @@ class TTSGenerator:
         except Exception as e:
             logger.error(f"Error generating segment audio: {e}")
             return False
+
+    async def _adjust_audio_pacing(self, audio_path: str, actual_duration: float, target_duration: float):
+        """
+        <<< НОВЫЙ МЕТОД: Умная корректировка скорости и пауз.
+        Корректирует скорость аудио для лучшей синхронизации, но с ограничениями.
+        """
+        try:
+            # Максимальное ускорение, чтобы речь оставалась разборчивой
+            MAX_SPEEDUP_FACTOR = 1.25 
+            
+            audio = AudioSegment.from_file(audio_path)
+            adjusted_audio = audio
+
+            if actual_duration > target_duration:
+                # Если новая озвучка длиннее оригинала
+                speed_factor = actual_duration / target_duration
+                
+                if speed_factor > MAX_SPEEDUP_FACTOR:
+                    logger.warning(f"High speed factor calculated: {speed_factor:.2f}x. Clamping to {MAX_SPEEDUP_FACTOR}x.")
+                    speed_factor = MAX_SPEEDUP_FACTOR
+
+                adjusted_audio = audio.speedup(playback_speed=speed_factor)
+                logger.info(f"🏃 Audio speed adjusted by {speed_factor:.2f}x")
+            
+            elif actual_duration < target_duration * 0.9:
+                # Если новая озвучка ЗНАЧИТЕЛЬНО короче, добавляем паузу в конце.
+                # Это создает "воздух" и улучшает восприятие.
+                silence_duration_ms = (target_duration - actual_duration) * 1000
+                # Не делаем паузу слишком длинной, чтобы не было неловкого молчания
+                if silence_duration_ms > 1000: # Максимум 1 секунда тишины
+                    silence_duration_ms = 1000
+
+                silence = AudioSegment.silent(duration=silence_duration_ms)
+                adjusted_audio = audio + silence
+                logger.info(f"➕ Added {silence_duration_ms:.0f}ms of silence for better pacing.")
+
+            adjusted_audio.export(audio_path, format="wav")
+
+        except Exception as e:
+            logger.error(f"Error adjusting audio pacing: {e}")
     
     def _get_audio_duration(self, audio_path: str) -> float:
         """Получает длительность аудиофайла"""
